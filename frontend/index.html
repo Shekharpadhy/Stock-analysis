@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Banking Client Sector Intelligence</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <header>
+    <div class="header-inner">
+      <div class="brand">
+        <span class="brand-icon">⬡</span>
+        <div>
+          <h1>Sector Intelligence</h1>
+          <p class="subtitle">Banking Client Research Dashboard</p>
+        </div>
+      </div>
+      <div class="search-bar">
+        <input id="tickerInput" type="text" placeholder="Enter ticker (e.g. AAPL, JPM, BAC)" />
+        <button id="analyzeBtn" onclick="analyzeCompany()">Analyze</button>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section class="stats-row" id="statsRow">
+      <div class="stat-card">
+        <div class="stat-label">Companies Tracked</div>
+        <div class="stat-value" id="totalCompanies">—</div>
+      </div>
+      <div class="stat-card high">
+        <div class="stat-label">High Risk</div>
+        <div class="stat-value" id="highRisk">—</div>
+      </div>
+      <div class="stat-card medium">
+        <div class="stat-label">Medium Risk</div>
+        <div class="stat-value" id="medRisk">—</div>
+      </div>
+      <div class="stat-card low">
+        <div class="stat-label">Low Risk</div>
+        <div class="stat-value" id="lowRisk">—</div>
+      </div>
+    </section>
+
+    <section class="grid-two">
+      <div class="panel">
+        <div class="panel-header">
+          <h2>Sector Overview</h2>
+          <div class="filters">
+            <select id="riskFilter" onchange="filterCompanies()">
+              <option value="">All Risk Levels</option>
+              <option value="High Risk">High Risk</option>
+              <option value="Medium Risk">Medium Risk</option>
+              <option value="Low Risk">Low Risk</option>
+            </select>
+            <select id="sectorFilter" onchange="filterCompanies()">
+              <option value="">All Sectors</option>
+            </select>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table id="companiesTable">
+            <thead>
+              <tr>
+                <th>Ticker</th>
+                <th>Company</th>
+                <th>Sector</th>
+                <th>Revenue Growth</th>
+                <th>Net Margin</th>
+                <th>Risk Score</th>
+                <th>Risk</th>
+              </tr>
+            </thead>
+            <tbody id="companiesBody">
+              <tr><td colspan="7" class="empty">No companies tracked yet. Enter a ticker above.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Sector Benchmarks</h2>
+        <div id="sectorChart" class="sector-bars"></div>
+      </div>
+    </section>
+
+    <section id="companyDetail" class="panel detail-panel hidden">
+      <div class="detail-header">
+        <div>
+          <h2 id="detailName">—</h2>
+          <span id="detailTicker" class="ticker-badge">—</span>
+          <span id="detailSector" class="sector-badge">—</span>
+        </div>
+        <div id="detailRiskBadge" class="risk-badge-large">—</div>
+      </div>
+
+      <div class="metrics-grid" id="metricsGrid"></div>
+
+      <div class="flags-section" id="flagsSection"></div>
+
+      <div class="peers-section">
+        <h3>Peer Comparison</h3>
+        <div id="peersTable"></div>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast hidden"></div>
+  <div id="loader" class="loader hidden">
+    <div class="spinner"></div>
+    <p>Fetching live data...</p>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
