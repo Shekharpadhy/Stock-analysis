@@ -1,0 +1,908 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Code Review Graph — Banking Intelligence Platform</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg: #0d1117;
+  --surface: #161b22;
+  --surface2: #1c2128;
+  --border: #21262d;
+  --text: #e6edf3;
+  --muted: #7d8590;
+  --accent: #1f6feb;
+  --green: #3fb950;
+  --yellow: #d29922;
+  --red: #f85149;
+  --purple: #bc8cff;
+  --orange: #ffa657;
+  --cyan: #39c5cf;
+}
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", monospace, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* ── Header ─────────────────────────────────────── */
+header {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 16px 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+header h1 { font-size: 16px; font-weight: 700; letter-spacing: -0.3px; }
+header p  { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.legend {
+  display: flex; gap: 16px; align-items: center; flex-wrap: wrap;
+}
+.legend-item { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); }
+.legend-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+
+/* ── Layout ─────────────────────────────────────── */
+.main-wrap {
+  display: grid;
+  grid-template-columns: 1fr 340px;
+  height: calc(100vh - 65px);
+}
+
+/* ── Graph canvas ───────────────────────────────── */
+#graphWrap {
+  position: relative;
+  overflow: auto;
+  background: var(--bg);
+}
+#graphCanvas {
+  position: absolute;
+  top: 0; left: 0;
+  pointer-events: none;
+}
+#graphSvg {
+  position: relative;
+  z-index: 2;
+}
+
+/* ── Nodes ──────────────────────────────────────── */
+.node {
+  position: absolute;
+  border-radius: 8px;
+  border: 1.5px solid var(--border);
+  padding: 10px 14px;
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s, transform 0.1s;
+  user-select: none;
+  z-index: 10;
+  min-width: 150px;
+  max-width: 190px;
+}
+.node:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,0.4); }
+.node.selected { box-shadow: 0 0 0 2px var(--accent), 0 8px 24px rgba(31,111,235,0.25); }
+
+.node-name { font-size: 12px; font-weight: 700; margin-bottom: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.node-path { font-size: 10px; color: var(--muted); margin-bottom: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.node-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.node-loc  { font-size: 10px; color: var(--muted); }
+.node-status { font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 10px; }
+
+/* status colours */
+.status-solid   { background: rgba(63,185,80,0.15);  color: var(--green);  }
+.status-issues  { background: rgba(210,153,34,0.15); color: var(--yellow); }
+.status-empty   { background: rgba(248,81,73,0.15);  color: var(--red);    }
+.status-orphan  { background: rgba(188,140,255,0.15);color: var(--purple); }
+.status-external{ background: rgba(57,197,207,0.15); color: var(--cyan);   }
+.status-stub    { background: rgba(255,166,87,0.15); color: var(--orange); }
+
+/* node background tints */
+.node.solid    { background: rgba(63,185,80,0.04);   border-color: rgba(63,185,80,0.3);   }
+.node.issues   { background: rgba(210,153,34,0.04);  border-color: rgba(210,153,34,0.3);  }
+.node.empty    { background: rgba(248,81,73,0.04);   border-color: rgba(248,81,73,0.3);   }
+.node.orphan   { background: rgba(188,140,255,0.06); border-color: rgba(188,140,255,0.3); }
+.node.external { background: rgba(57,197,207,0.04);  border-color: rgba(57,197,207,0.3);  }
+.node.stub     { background: rgba(255,166,87,0.04);  border-color: rgba(255,166,87,0.3);  }
+
+.node-issues-count {
+  font-size: 10px;
+  color: var(--red);
+  font-weight: 600;
+}
+
+/* Layer labels */
+.layer-label {
+  position: absolute;
+  font-size: 10px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  font-weight: 600;
+  border-left: 2px solid var(--border);
+  padding-left: 8px;
+  z-index: 1;
+}
+
+/* ── Side panel ─────────────────────────────────── */
+#sidePanel {
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+.side-header {
+  padding: 20px;
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+  z-index: 5;
+}
+.side-header h2 { font-size: 14px; font-weight: 700; margin-bottom: 4px; }
+.side-header p  { font-size: 11px; color: var(--muted); }
+
+.side-body { padding: 16px 20px; flex: 1; }
+
+.detail-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+  gap: 8px;
+  padding: 40px 20px;
+}
+.detail-placeholder svg { opacity: 0.3; }
+
+.section-title {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--muted);
+  font-weight: 600;
+  margin-bottom: 8px;
+  margin-top: 16px;
+}
+.section-title:first-child { margin-top: 0; }
+
+.issue-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12px;
+  padding: 7px 10px;
+  background: var(--surface2);
+  border-radius: 6px;
+  margin-bottom: 6px;
+  border-left: 2px solid var(--red);
+  line-height: 1.4;
+}
+.issue-item.warn { border-left-color: var(--yellow); }
+.issue-item.info { border-left-color: var(--accent); }
+.issue-item.good { border-left-color: var(--green); }
+
+.issue-icon { font-size: 12px; flex-shrink: 0; margin-top: 1px; }
+
+.dep-tag {
+  display: inline-block;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  margin: 2px;
+  font-family: monospace;
+}
+.dep-tag.imported-by { border-color: rgba(63,185,80,0.4); color: var(--green); }
+.dep-tag.imports     { border-color: rgba(31,111,235,0.4); color: var(--accent); }
+.dep-tag.missing     { border-color: rgba(248,81,73,0.4);  color: var(--red);   }
+
+.metric-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+.metric-row:last-child { border-bottom: none; }
+.metric-val { font-weight: 700; }
+.metric-val.good { color: var(--green); }
+.metric-val.warn { color: var(--yellow); }
+.metric-val.bad  { color: var(--red); }
+
+/* ── Summary bar ────────────────────────────────── */
+.summary-bar {
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  padding: 10px 32px;
+  display: flex;
+  gap: 24px;
+  flex-wrap: wrap;
+  align-items: center;
+  font-size: 12px;
+}
+.summary-item { display: flex; align-items: center; gap: 6px; }
+.summary-dot  { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.summary-num  { font-weight: 700; }
+
+svg.arrows { position: absolute; top: 0; left: 0; pointer-events: none; overflow: visible; z-index: 5; }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>Code Review Graph — Banking Intelligence Platform</h1>
+    <p>Module dependency map &amp; health analysis · Click any node to inspect</p>
+  </div>
+  <div class="legend">
+    <div class="legend-item"><div class="legend-dot" style="background:var(--green)"></div> Solid</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--yellow)"></div> Has Issues</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--red)"></div> Empty/Broken</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--purple)"></div> Orphaned (built, not wired)</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--orange)"></div> Stub (placeholder)</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--cyan)"></div> External</div>
+  </div>
+</header>
+
+<div class="main-wrap">
+  <div id="graphWrap">
+    <svg class="arrows" id="arrowSvg"></svg>
+    <div id="graphNodes"></div>
+  </div>
+
+  <div id="sidePanel">
+    <div class="side-header">
+      <h2 id="sideTitle">Node Inspector</h2>
+      <p id="sidePath">Select a node to view details</p>
+    </div>
+    <div class="side-body" id="sideBody">
+      <div class="detail-placeholder">
+        <svg width="40" height="40" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+            d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
+        </svg>
+        <span>Click any module node<br>to inspect its code health</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="summary-bar" id="summaryBar"></div>
+
+<script>
+// ─────────────────────────────────────────────────────────────
+// DATA MODEL
+// ─────────────────────────────────────────────────────────────
+const NODES = [
+  // ── External ──────────────────────────────────────────────
+  {
+    id: "yfinance",
+    name: "yfinance",
+    path: "PyPI package",
+    layer: 0, col: 1,
+    kind: "external",
+    loc: null,
+    issues: [],
+    good: ["Live market data, fundamentals, balance sheet, cash flow"],
+    deps: [],
+    importedBy: ["ingestion"],
+    summary: "Third-party library for Yahoo Finance data. Synchronous — will block FastAPI event loop under load."
+  },
+  {
+    id: "sec_edgar",
+    name: "SEC EDGAR",
+    path: "data.sec.gov",
+    layer: 0, col: 3,
+    kind: "external",
+    loc: null,
+    issues: [],
+    good: ["Free public API for 10-K/10-Q filings, company submissions"],
+    deps: [],
+    importedBy: ["ingestion"],
+    summary: "SEC's public EDGAR API. Used for CIK lookup and filing retrieval. No auth needed."
+  },
+
+  // ── Config ────────────────────────────────────────────────
+  {
+    id: "config",
+    name: "config.py",
+    path: "backend/config.py",
+    layer: 1, col: 2,
+    kind: "solid",
+    loc: 15,
+    issues: [
+      { sev: "warn", text: "No Redis URL, no JWT_SECRET, no API_KEY fields — needed for Phase 1 auth + caching" },
+      { sev: "warn", text: "cache_ttl exists as a setting but Redis is not implemented anywhere" }
+    ],
+    good: [
+      "Pydantic BaseSettings — correct pattern for env-var validation",
+      "Reads from .env file via python-dotenv"
+    ],
+    deps: [],
+    importedBy: ["db", "ingestion"],
+    summary: "Pydantic Settings config. Solid foundation but missing fields for upcoming auth and caching work."
+  },
+
+  // ── Database ──────────────────────────────────────────────
+  {
+    id: "db",
+    name: "db.py",
+    path: "backend/database/db.py",
+    layer: 2, col: 3,
+    kind: "issues",
+    loc: 47,
+    issues: [
+      { sev: "error", text: "No Alembic migrations — schema changes require manual DROP TABLE or data loss" },
+      { sev: "error", text: "CompanyRecord has no advanced_scores columns (altman_z, beneish_m, icr, fcf_margin) — advanced_scores.py output has nowhere to persist" },
+      { sev: "warn",  text: "SQLite default is fine for dev, but check_same_thread=False can mask concurrency bugs" }
+    ],
+    good: [
+      "SQLAlchemy ORM — no raw SQL, injection-safe",
+      "get_db() dependency injection pattern is correct",
+      "init_db() called on startup"
+    ],
+    deps: ["config"],
+    importedBy: ["routes"],
+    summary: "Database layer. Works but schema is frozen without migrations, and missing columns for advanced scores."
+  },
+
+  // ── Entry Point ───────────────────────────────────────────
+  {
+    id: "main",
+    name: "main.py",
+    path: "backend/main.py",
+    layer: 2, col: 1,
+    kind: "issues",
+    loc: 37,
+    issues: [
+      { sev: "warn", text: "@app.on_event('startup') is deprecated since FastAPI 0.93 — replace with lifespan context manager" },
+      { sev: "error", text: "CORS allow_origins=['*'] — anyone can call this API from any website; lock down for production" },
+      { sev: "error", text: "No authentication middleware — all endpoints including DELETE are open" },
+      { sev: "warn",  text: "No rate limiting middleware" }
+    ],
+    good: [
+      "FastAPI app correctly structured",
+      "Router included under /api/v1 prefix",
+      "Static frontend served — no separate web server needed for dev"
+    ],
+    deps: ["db", "routes"],
+    importedBy: [],
+    summary: "FastAPI entry point. Runnable as-is but missing auth, rate limiting, and uses deprecated startup hook."
+  },
+
+  // ── Root main.py ──────────────────────────────────────────
+  {
+    id: "root_main",
+    name: "main.py (root)",
+    path: "main.py",
+    layer: 2, col: 0,
+    kind: "empty",
+    loc: 1,
+    issues: [
+      { sev: "error", text: "File is empty — likely intended as a convenience entry point (e.g. 'python main.py') but does nothing" }
+    ],
+    good: [],
+    deps: [],
+    importedBy: [],
+    summary: "Root-level main.py is a 1-line empty file. Not harmful, but confusing. The real entry is backend/main.py."
+  },
+
+  // ── Routes ───────────────────────────────────────────────
+  {
+    id: "routes",
+    name: "routes.py",
+    path: "backend/api/routes.py",
+    layer: 3, col: 2,
+    kind: "issues",
+    loc: 168,
+    issues: [
+      { sev: "error", text: "DELETE /companies/{ticker} has zero auth — anyone can delete records" },
+      { sev: "error", text: "POST /companies/analyze calls yfinance synchronously inside a sync route — blocks event loop under concurrent load" },
+      { sev: "error", text: "advanced_scores.py is NEVER imported or called — Altman Z', Beneish M, ICR, FCF all computed but never returned via API" },
+      { sev: "warn",  text: "No pagination on GET /companies — returns all rows; will slow with scale" },
+      { sev: "warn",  text: "No input validation on ticker (length, characters, injection)" },
+      { sev: "warn",  text: "No response models (Pydantic schemas) — return dicts; breaking changes silent" }
+    ],
+    good: [
+      "All core CRUD routes implemented",
+      "Peer benchmarking endpoint works",
+      "Sector summary aggregation is clean SQL",
+      "Risk heatmap endpoint ready for frontend"
+    ],
+    deps: ["db", "ingestion", "sector_classifier", "risk_engine"],
+    importedBy: ["main"],
+    summary: "Core API routes. Well-structured but critical gap: advanced_scores.py is never called, DELETE is unauthenticated, and yfinance calls are synchronous."
+  },
+
+  // ── Ingestion ────────────────────────────────────────────
+  {
+    id: "ingestion",
+    name: "ingestion.py",
+    path: "backend/services/ingestion.py",
+    layer: 4, col: 1,
+    kind: "issues",
+    loc: 101,
+    issues: [
+      { sev: "error", text: "fetch_yahoo_fundamentals() is fully synchronous — when called from async FastAPI route it blocks the event loop; wrap in asyncio.to_thread()" },
+      { sev: "error", text: "No caching — every /analyze call hits Yahoo Finance fresh; hammers the API and slows response to 2-5s" },
+      { sev: "warn",  text: "fetch_sec_filings makes 2 HTTP calls per request (atom feed + submissions JSON) — redundant, submissions JSON alone is sufficient" },
+      { sev: "warn",  text: "lookup_cik_by_ticker downloads the full company_tickers.json on every call (~8MB) — cache it" }
+    ],
+    good: [
+      "Correct revenue growth YoY calculation",
+      "_safe_pct() helper cleanly handles None",
+      "SEC EDGAR integration works with correct User-Agent header",
+      "Error handling raises ValueError with useful message"
+    ],
+    deps: ["config", "yfinance", "sec_edgar"],
+    importedBy: ["routes"],
+    summary: "Data ingestion from Yahoo Finance and SEC EDGAR. Logic is correct but synchronous calls will kill performance. No caching."
+  },
+
+  // ── Risk Engine ───────────────────────────────────────────
+  {
+    id: "risk_engine",
+    name: "risk_engine.py",
+    path: "backend/services/risk_engine.py",
+    layer: 4, col: 2,
+    kind: "solid",
+    loc: 117,
+    issues: [
+      { sev: "warn", text: "Risk weights are hardcoded constants — not configurable without code change" },
+      { sev: "info", text: "D/E thresholds are US-market tuned; Indian bank stocks typically carry higher D/E by nature — sector-aware thresholds would be more accurate" }
+    ],
+    good: [
+      "Pure function — no side effects, easy to test",
+      "Clear weight system with labeled flags",
+      "Three-tier risk label (Low/Medium/High) is intuitive",
+      "peer_benchmarks() min/max/avg is clean and reusable"
+    ],
+    deps: [],
+    importedBy: ["routes"],
+    summary: "Risk scoring engine. The cleanest module in the codebase. Pure functions, clear logic, testable. Minor: thresholds are US-tuned."
+  },
+
+  // ── Advanced Scores ───────────────────────────────────────
+  {
+    id: "advanced_scores",
+    name: "advanced_scores.py",
+    path: "backend/services/advanced_scores.py",
+    layer: 4, col: 3,
+    kind: "orphan",
+    loc: 367,
+    issues: [
+      { sev: "error", text: "ORPHANED — not imported by routes.py. Altman Z', Beneish M, ICR, FCF are fully implemented but never called via API. This is the biggest single gap in the backend." },
+      { sev: "warn",  text: "compute_all_advanced() takes a yfinance Ticker object — tightly coupled to yfinance; harder to swap data sources" },
+      { sev: "info",  text: "No DB columns exist for these scores — needs CompanyRecord migration before results can be persisted" }
+    ],
+    good: [
+      "Altman Z'-Score (non-manufacturing 2000 version) — correctly implemented",
+      "Beneish M-Score (8-variable model) — correctly implemented with graceful missing-var handling",
+      "Interest Coverage Ratio with labeled severity tiers",
+      "Free Cash Flow Margin correctly computed",
+      "missing_vars[] in Beneish result is excellent for debugging data gaps",
+      "Largest and most sophisticated module in the project"
+    ],
+    deps: [],
+    importedBy: [],
+    summary: "The most impressive module — but completely disconnected. Altman, Beneish, ICR, FCF all built to production quality. Just needs to be wired into routes.py and db.py."
+  },
+
+  // ── Sector Classifier ─────────────────────────────────────
+  {
+    id: "sector_classifier",
+    name: "sector_classifier.py",
+    path: "backend/services/sector_classifier.py",
+    layer: 4, col: 0,
+    kind: "solid",
+    loc: 72,
+    issues: [
+      { sev: "info", text: "Keyword matching is case-folded but not stemmed — 'banking' matches but 'bancorp' might not" },
+      { sev: "info", text: "Falls back to yahoo_sector directly if no GICS match — prevents 'Unclassified' for most tickers" }
+    ],
+    good: [
+      "Full GICS taxonomy (11 sectors, sub-sectors)",
+      "Dual fallback: keyword match → yahoo sector → 'Unclassified'",
+      "get_sector_peers() is clean and reusable"
+    ],
+    deps: [],
+    importedBy: ["routes"],
+    summary: "GICS sector classification. Solid and well-structured. Minor edge cases in keyword matching."
+  },
+
+  // ── Sentiment Analysis (NLP) ──────────────────────────────
+  {
+    id: "sentiment",
+    name: "sentiment_analysis.py",
+    path: "nlp/sentiment_analysis.py",
+    layer: 5, col: 1,
+    kind: "empty",
+    loc: 0,
+    issues: [
+      { sev: "error", text: "File is empty — Phase 3 dependency, but listed in project structure as if active" },
+      { sev: "warn",  text: "Located in nlp/ (root) not backend/services/ — inconsistent with project structure" }
+    ],
+    good: [],
+    deps: [],
+    importedBy: [],
+    summary: "Empty placeholder. Phase 3 will implement FinBERT sentiment scoring here."
+  },
+
+  // ── Signal Detection ─────────────────────────────────────
+  {
+    id: "signals",
+    name: "signal_detection.py",
+    path: "analytics/signal_detection.py",
+    layer: 5, col: 2,
+    kind: "empty",
+    loc: 0,
+    issues: [
+      { sev: "error", text: "File is empty — Phase 3 dependency" },
+      { sev: "warn",  text: "Located in analytics/ (root) not backend/services/ — inconsistent structure" }
+    ],
+    good: [],
+    deps: [],
+    importedBy: [],
+    summary: "Empty placeholder. Phase 3 will implement earnings beat/miss detection, analyst upgrade tracking, insider activity signals."
+  },
+
+  // ── Root Ingestion stubs ──────────────────────────────────
+  {
+    id: "fin_data",
+    name: "financial_data.py",
+    path: "ingestion/financial_data.py",
+    layer: 5, col: 0,
+    kind: "stub",
+    loc: 0,
+    issues: [
+      { sev: "error", text: "File is empty" },
+      { sev: "warn",  text: "Duplicate concern: backend/services/ingestion.py already does financial data — this creates confusion about which is authoritative" }
+    ],
+    good: [],
+    deps: [],
+    importedBy: [],
+    summary: "Empty stub that duplicates the concern of backend/services/ingestion.py. Should be consolidated or deleted."
+  },
+  {
+    id: "news_data",
+    name: "news_data.py",
+    path: "ingestion/news_data.py",
+    layer: 5, col: 3,
+    kind: "stub",
+    loc: 0,
+    issues: [
+      { sev: "error", text: "File is empty — Phase 3 NewsAPI/RSS ingestion goes here" }
+    ],
+    good: [],
+    deps: [],
+    importedBy: [],
+    summary: "Empty placeholder for Phase 3 news ingestion (NewsAPI, RSS feeds, Google News)."
+  },
+
+  // ── Reports ───────────────────────────────────────────────
+  {
+    id: "reports",
+    name: "generate_report.py",
+    path: "reports/generate_report.py",
+    layer: 5, col: 4,
+    kind: "stub",
+    loc: 0,
+    issues: [
+      { sev: "error", text: "File is empty — Phase 5 PDF generation goes here" }
+    ],
+    good: [],
+    deps: [],
+    importedBy: [],
+    summary: "Empty placeholder for Phase 5 banker-ready PDF report generation."
+  },
+
+  // ── Frontend ─────────────────────────────────────────────
+  {
+    id: "frontend",
+    name: "index.html + styles.css",
+    path: "frontend/",
+    layer: 1, col: 4,
+    kind: "solid",
+    loc: 420,
+    issues: [
+      { sev: "error", text: "References /static/app.js which does NOT EXIST — dashboard JS is missing, the UI is non-functional" },
+      { sev: "warn",  text: "No error boundary for failed API calls" }
+    ],
+    good: [
+      "Dark theme with GitHub-style design system — clean and professional",
+      "Responsive layout with media queries",
+      "Risk chip color system (green/yellow/red) matches backend labels",
+      "Sector benchmark bar chart UI is ready",
+      "Company detail panel with peer comparison layout built"
+    ],
+    deps: [],
+    importedBy: [],
+    summary: "Frontend shell looks good visually but is non-functional — app.js is missing. The HTML/CSS is production-quality."
+  },
+];
+
+// ─────────────────────────────────────────────────────────────
+// EDGES (dependency arrows)
+// ─────────────────────────────────────────────────────────────
+const EDGES = [
+  // main.py backbone
+  { from: "main",      to: "db",         kind: "imports" },
+  { from: "main",      to: "routes",     kind: "imports" },
+  // routes deps
+  { from: "routes",    to: "db",         kind: "imports" },
+  { from: "routes",    to: "ingestion",  kind: "imports" },
+  { from: "routes",    to: "sector_classifier", kind: "imports" },
+  { from: "routes",    to: "risk_engine",kind: "imports" },
+  // missing wiring (orphan)
+  { from: "routes",    to: "advanced_scores", kind: "missing" },
+  // service deps
+  { from: "ingestion", to: "config",     kind: "imports" },
+  { from: "ingestion", to: "yfinance",   kind: "imports" },
+  { from: "ingestion", to: "sec_edgar",  kind: "imports" },
+  { from: "db",        to: "config",     kind: "imports" },
+];
+
+// ─────────────────────────────────────────────────────────────
+// LAYOUT CONFIG
+// ─────────────────────────────────────────────────────────────
+const LAYER_Y  = [80, 200, 330, 470, 610, 750];
+const COL_X    = [60, 260, 460, 660, 860];
+const NODE_W   = 180;
+const NODE_H_APPROX = 76;
+
+function nodeX(n) { return COL_X[n.col] || 60; }
+function nodeY(n) { return LAYER_Y[n.layer] || 80; }
+
+// ─────────────────────────────────────────────────────────────
+// RENDER NODES
+// ─────────────────────────────────────────────────────────────
+let selectedId = null;
+
+function statusLabel(kind) {
+  return {
+    solid: "Solid",
+    issues: "Has Issues",
+    empty: "Empty",
+    orphan: "Orphaned",
+    external: "External",
+    stub: "Stub"
+  }[kind] || kind;
+}
+
+function render() {
+  const wrap = document.getElementById("graphNodes");
+  const svgEl = document.getElementById("arrowSvg");
+
+  // compute canvas size
+  let maxX = 0, maxY = 0;
+  NODES.forEach(n => {
+    maxX = Math.max(maxX, nodeX(n) + NODE_W + 40);
+    maxY = Math.max(maxY, nodeY(n) + 100);
+  });
+  wrap.style.width  = maxX + "px";
+  wrap.style.height = maxY + "px";
+  svgEl.setAttribute("width", maxX);
+  svgEl.setAttribute("height", maxY);
+
+  // Layer labels
+  const layerNames = ["External APIs", "Config / Frontend", "Entry Points / DB", "API Router", "Services", "Stubs / Placeholders"];
+  layerNames.forEach((name, i) => {
+    const el = document.createElement("div");
+    el.className = "layer-label";
+    el.textContent = name;
+    el.style.left = "8px";
+    el.style.top  = (LAYER_Y[i] + 2) + "px";
+    wrap.appendChild(el);
+  });
+
+  // Nodes
+  NODES.forEach(n => {
+    const div = document.createElement("div");
+    div.className = `node ${n.kind}`;
+    div.id = "node-" + n.id;
+    div.style.left   = nodeX(n) + "px";
+    div.style.top    = nodeY(n) + "px";
+    div.style.width  = NODE_W + "px";
+
+    const issueCount = n.issues.filter(i => i.sev === "error").length;
+    const warnCount  = n.issues.filter(i => i.sev === "warn").length;
+
+    div.innerHTML = `
+      <div class="node-name">${n.name}</div>
+      <div class="node-path">${n.path}</div>
+      <div class="node-meta">
+        <span class="node-status status-${n.kind}">${statusLabel(n.kind)}</span>
+        ${n.loc !== null ? `<span class="node-loc">${n.loc} loc</span>` : ""}
+        ${issueCount > 0 ? `<span class="node-issues-count">${issueCount}✗</span>` : ""}
+        ${warnCount  > 0 ? `<span style="font-size:10px;color:var(--yellow);font-weight:600">${warnCount}⚠</span>` : ""}
+      </div>
+    `;
+    div.addEventListener("click", () => selectNode(n.id));
+    wrap.appendChild(div);
+  });
+
+  // Arrows
+  drawArrows(svgEl);
+
+  // Summary bar
+  renderSummary();
+}
+
+function drawArrows(svgEl) {
+  // define arrowhead markers
+  svgEl.innerHTML = `
+    <defs>
+      <marker id="arrow-normal" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+        <path d="M0,0 L0,6 L8,3 z" fill="rgba(125,133,144,0.6)" />
+      </marker>
+      <marker id="arrow-missing" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+        <path d="M0,0 L0,6 L8,3 z" fill="rgba(248,81,73,0.8)" />
+      </marker>
+    </defs>
+  `;
+
+  EDGES.forEach(e => {
+    const fromNode = NODES.find(n => n.id === e.from);
+    const toNode   = NODES.find(n => n.id === e.to);
+    if (!fromNode || !toNode) return;
+
+    const x1 = nodeX(fromNode) + NODE_W / 2;
+    const y1 = nodeY(fromNode) + NODE_H_APPROX;
+    const x2 = nodeX(toNode)   + NODE_W / 2;
+    const y2 = nodeY(toNode);
+
+    const isMissing = e.kind === "missing";
+    const color = isMissing ? "rgba(248,81,73,0.7)" : "rgba(125,133,144,0.4)";
+    const dash  = isMissing ? "5,4" : "";
+    const marker = isMissing ? "url(#arrow-missing)" : "url(#arrow-normal)";
+
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    const cx = (x1 + x2) / 2;
+    const cy1 = y1 + 20;
+    const cy2 = y2 - 20;
+    path.setAttribute("d", `M${x1},${y1} C${x1},${cy1} ${x2},${cy2} ${x2},${y2}`);
+    path.setAttribute("fill", "none");
+    path.setAttribute("stroke", color);
+    path.setAttribute("stroke-width", isMissing ? "1.5" : "1");
+    if (dash) path.setAttribute("stroke-dasharray", dash);
+    path.setAttribute("marker-end", marker);
+    svgEl.appendChild(path);
+
+    // Label for missing edges
+    if (isMissing) {
+      const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      text.setAttribute("x", (x1 + x2) / 2 + 4);
+      text.setAttribute("y", (y1 + y2) / 2);
+      text.setAttribute("fill", "rgba(248,81,73,0.8)");
+      text.setAttribute("font-size", "9");
+      text.setAttribute("font-family", "monospace");
+      text.textContent = "NOT WIRED";
+      svgEl.appendChild(text);
+    }
+  });
+}
+
+function renderSummary() {
+  const bar = document.getElementById("summaryBar");
+  const counts = {};
+  let totalLoc = 0;
+  let totalIssues = 0;
+  NODES.forEach(n => {
+    counts[n.kind] = (counts[n.kind] || 0) + 1;
+    if (n.loc) totalLoc += n.loc;
+    totalIssues += n.issues.filter(i => i.sev === "error").length;
+  });
+
+  const colorMap = { solid:"var(--green)", issues:"var(--yellow)", empty:"var(--red)", orphan:"var(--purple)", stub:"var(--orange)", external:"var(--cyan)" };
+  const labelMap = { solid:"Solid", issues:"Has Issues", empty:"Empty", orphan:"Orphaned", stub:"Stub", external:"External" };
+
+  let html = `<span style="color:var(--muted);font-size:11px;margin-right:8px">CODEBASE HEALTH</span>`;
+  Object.entries(counts).forEach(([k, v]) => {
+    html += `<div class="summary-item">
+      <div class="summary-dot" style="background:${colorMap[k]}"></div>
+      <span style="color:var(--muted)">${labelMap[k]}</span>
+      <span class="summary-num">${v}</span>
+    </div>`;
+  });
+  html += `<div style="margin-left:auto;display:flex;gap:20px">
+    <div class="summary-item"><span style="color:var(--muted)">Total LOC</span><span class="summary-num">${totalLoc}</span></div>
+    <div class="summary-item"><span style="color:var(--muted)">Critical Issues</span><span class="summary-num" style="color:var(--red)">${totalIssues}</span></div>
+    <div class="summary-item"><span style="color:var(--muted)">Modules</span><span class="summary-num">${NODES.length}</span></div>
+  </div>`;
+  bar.innerHTML = html;
+}
+
+// ─────────────────────────────────────────────────────────────
+// INSPECT PANEL
+// ─────────────────────────────────────────────────────────────
+function selectNode(id) {
+  // deselect previous
+  if (selectedId) {
+    const prev = document.getElementById("node-" + selectedId);
+    if (prev) prev.classList.remove("selected");
+  }
+  selectedId = id;
+  const el = document.getElementById("node-" + id);
+  if (el) el.classList.add("selected");
+
+  const n = NODES.find(n => n.id === id);
+  if (!n) return;
+
+  document.getElementById("sideTitle").textContent = n.name;
+  document.getElementById("sidePath").textContent  = n.path;
+
+  let html = "";
+
+  // Summary
+  html += `<div class="section-title">Summary</div>`;
+  html += `<div style="font-size:12px;line-height:1.6;color:var(--muted);margin-bottom:4px">${n.summary}</div>`;
+
+  // Metrics
+  html += `<div class="section-title">Metrics</div>`;
+  html += `<div>`;
+  html += `<div class="metric-row"><span>Status</span><span class="node-status status-${n.kind} metric-val">${statusLabel(n.kind)}</span></div>`;
+  if (n.loc !== null) {
+    const locClass = n.loc === 0 ? "bad" : n.loc > 200 ? "warn" : "good";
+    html += `<div class="metric-row"><span>Lines of code</span><span class="metric-val ${locClass}">${n.loc}</span></div>`;
+  }
+  const errors = n.issues.filter(i => i.sev === "error").length;
+  const warns  = n.issues.filter(i => i.sev === "warn").length;
+  if (errors > 0) html += `<div class="metric-row"><span>Critical issues</span><span class="metric-val bad">${errors}</span></div>`;
+  if (warns  > 0) html += `<div class="metric-row"><span>Warnings</span><span class="metric-val warn">${warns}</span></div>`;
+  html += `</div>`;
+
+  // Issues
+  if (n.issues.length > 0) {
+    html += `<div class="section-title">Issues</div>`;
+    n.issues.forEach(iss => {
+      const cls = iss.sev === "error" ? "" : iss.sev === "warn" ? "warn" : "info";
+      const icon = iss.sev === "error" ? "✗" : iss.sev === "warn" ? "⚠" : "ℹ";
+      html += `<div class="issue-item ${cls}"><span class="issue-icon">${icon}</span><span>${iss.text}</span></div>`;
+    });
+  }
+
+  // What's good
+  if (n.good.length > 0) {
+    html += `<div class="section-title">What's Good</div>`;
+    n.good.forEach(g => {
+      html += `<div class="issue-item good"><span class="issue-icon">✓</span><span>${g}</span></div>`;
+    });
+  }
+
+  // Dependencies
+  if (n.deps.length > 0 || n.importedBy.length > 0) {
+    html += `<div class="section-title">Dependencies</div>`;
+    if (n.importedBy.length > 0) {
+      html += `<div style="margin-bottom:6px"><span style="font-size:10px;color:var(--muted)">Imported by  </span>`;
+      n.importedBy.forEach(d => html += `<span class="dep-tag imported-by">${d}</span>`);
+      html += `</div>`;
+    }
+    if (n.deps.length > 0) {
+      html += `<div><span style="font-size:10px;color:var(--muted)">Imports  </span>`;
+      n.deps.forEach(d => html += `<span class="dep-tag imports">${d}</span>`);
+      html += `</div>`;
+    }
+  }
+
+  document.getElementById("sideBody").innerHTML = html;
+}
+
+// ─────────────────────────────────────────────────────────────
+// INIT
+// ─────────────────────────────────────────────────────────────
+render();
+
+// Auto-select the most interesting node
+setTimeout(() => selectNode("advanced_scores"), 300);
+</script>
+</body>
+</html>
