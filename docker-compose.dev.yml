@@ -1,0 +1,19 @@
+version: "3.9"
+services:
+  api:
+    build: .
+    volumes:
+      - .:/app
+    environment:
+      - DEBUG=true
+      - DATABASE_URL=postgresql+asyncpg://dev:dev@db/bcsi_dev
+    ports:
+      - "8000:8000"
+    depends_on: [db, redis]
+  db:
+    image: postgres:15-alpine
+    environment: {POSTGRES_USER: dev, POSTGRES_PASSWORD: dev, POSTGRES_DB: bcsi_dev}
+    ports: ["5433:5432"]
+  redis:
+    image: redis:7-alpine
+    ports: ["6380:6379"]
