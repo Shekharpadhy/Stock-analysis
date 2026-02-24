@@ -1,0 +1,14 @@
+version: "3.9"
+services:
+  test:
+    build: .
+    command: pytest tests/ -v --cov=backend
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://test:test@db_test/bcsi_test
+      - REDIS_URL=redis://redis_test:6379/1
+    depends_on: [db_test, redis_test]
+  db_test:
+    image: postgres:15-alpine
+    environment: {POSTGRES_USER: test, POSTGRES_PASSWORD: test, POSTGRES_DB: bcsi_test}
+  redis_test:
+    image: redis:7-alpine
