@@ -1,0 +1,43 @@
+# Banking Client Sector Intelligence — local stack.
+# Run everything with:  docker compose up --build
+#
+# For production parity you can swap the SQLite volume for a Postgres service
+# (the app's DATABASE_URL already supports it) — that lands in Phase 7.
+
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  app:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: sqlite:////app/data/intelligence.db
+      REDIS_URL: redis://redis:6379/0
+      SEC_USER_AGENT: ${SEC_USER_AGENT:-ResearchBot research@example.com}
+      JWT_SECRET: ${JWT_SECRET:-dev-only-insecure-secret-change-me}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-change-me}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8000}
+    volumes:
+      - bcsi-data:/app/data
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/companies"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+volumes:
+  bcsi-data:
