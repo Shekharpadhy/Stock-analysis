@@ -1,0 +1,14 @@
+name: Deploy
+on:
+  push:
+    branches: [main]
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    if: github.ref == "refs/heads/main"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Docker image
+        run: docker build -t bcsi-api:${{ github.sha }} .
+      - name: Push to registry
+        run: echo "Add your registry push command here"
