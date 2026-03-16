@@ -1,0 +1,13 @@
+name: Lint
+on: [push, pull_request]
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
+        with: {python-version: "3.11"}
+      - run: pip install flake8 black isort mypy
+      - run: flake8 backend/ --max-line-length=100
+      - run: black --check backend/
+      - run: isort --check-only backend/
