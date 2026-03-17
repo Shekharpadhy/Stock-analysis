@@ -1,0 +1,11 @@
+redis:
+  url: "${REDIS_URL:-redis://localhost:6379/0}"
+  max_connections: 20
+  socket_timeout: 5
+ttl:
+  sector: 3600
+  company: 900
+  price_history: 300
+  risk_score: 600
+  backtest: 86400
+key_prefix: "bcsi"
