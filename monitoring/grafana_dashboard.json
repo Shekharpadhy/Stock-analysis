@@ -1,0 +1,21 @@
+{
+  "title": "BCSI API Dashboard",
+  "panels": [
+    {
+      "title": "Request Rate",
+      "type": "graph"
+    },
+    {
+      "title": "Error Rate",
+      "type": "graph"
+    },
+    {
+      "title": "P95 Latency",
+      "type": "graph"
+    },
+    {
+      "title": "Active Connections",
+      "type": "stat"
+    }
+  ]
+}
