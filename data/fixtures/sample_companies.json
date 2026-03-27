@@ -1,0 +1,27 @@
+[
+  {
+    "ticker": "HDFCBANK.NS",
+    "name": "HDFC Bank",
+    "sector": "Financials"
+  },
+  {
+    "ticker": "ICICIBANK.NS",
+    "name": "ICICI Bank",
+    "sector": "Financials"
+  },
+  {
+    "ticker": "INFY.NS",
+    "name": "Infosys",
+    "sector": "Information Technology"
+  },
+  {
+    "ticker": "TCS.NS",
+    "name": "Tata Consultancy Services",
+    "sector": "IT"
+  },
+  {
+    "ticker": "RELIANCE.NS",
+    "name": "Reliance Industries",
+    "sector": "Energy"
+  }
+]
