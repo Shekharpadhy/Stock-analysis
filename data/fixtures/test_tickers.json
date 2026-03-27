@@ -1,0 +1,16 @@
+{
+  "valid": [
+    "HDFCBANK.NS",
+    "ICICIBANK.NS",
+    "INFY.NS"
+  ],
+  "invalid": [
+    "NOTASTOCK",
+    "123",
+    ""
+  ],
+  "edge_cases": [
+    "BRK.B",
+    "BRK-A"
+  ]
+}
