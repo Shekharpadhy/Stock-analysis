@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><title>BCSI Sector Report</title>
+<style>body{font-family:sans-serif;margin:40px}h1{color:#1a365d}
+table{border-collapse:collapse;width:100%}
+td,th{border:1px solid #ddd;padding:8px;text-align:left}</style>
+</head>
+<body>
+<h1>Banking Client Sector Intelligence Report</h1>
+<p>Generated: {{report_date}}</p>
+<table>
+  <tr><th>Sector</th><th>Risk Score</th><th>Companies</th></tr>
+  {{#each sectors}}<tr><td>{{name}}</td><td>{{risk_score}}</td><td>{{companies}}</td></tr>{{/each}}
+</table>
+<p>{{summary}}</p>
+</body></html>
