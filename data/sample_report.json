@@ -1,0 +1,11 @@
+{
+  "report_date": "2026-03-31",
+  "sectors": [
+    {
+      "name": "Financials",
+      "risk_score": 0.38,
+      "companies": 12
+    }
+  ],
+  "summary": "Overall market risk is moderate."
+}
