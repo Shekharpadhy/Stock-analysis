@@ -1,0 +1,12 @@
+features:
+  ensemble_risk: true
+  backtesting: true
+  governance_scoring: true
+  pit_reconstruction: true
+  valuation_engine: true
+  nlp_sentiment: true
+  cache_responses: true
+  rate_limiting: true
+experimental:
+  ml_predictions: false
+  realtime_stream: false
