@@ -18,3 +18,9 @@
 - [ ] PDF report export
 - [ ] API key management portal
 - [ ] Kubernetes Helm chart
+
+## May 2026 Sprint
+- ML default risk
+- v2 API
+- Web dashboard refresh
+
