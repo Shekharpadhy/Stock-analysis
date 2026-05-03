@@ -221,3 +221,6 @@ MIT. Use it for anything you want. If it makes you money or saves your team time
 <p align="center">
   <sub>Built for analysts who want a real answer, not a chart.</sub>
 </p>
+
+<!-- v2 in development -->
+
