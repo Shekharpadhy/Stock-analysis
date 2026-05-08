@@ -25,3 +25,7 @@ All notable changes are documented here following [Keep a Changelog](https://kee
 - Docker Compose deployment with Redis and PostgreSQL
 - GitHub Actions CI/CD pipeline with coverage reporting
 - Full pytest test suite across all services
+
+## [Unreleased]
+- v2 API, ML default risk, WS streaming, k8s deploy
+
