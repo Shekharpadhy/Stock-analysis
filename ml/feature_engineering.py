@@ -5,3 +5,7 @@ def engineer_credit_features(df: pd.DataFrame) -> pd.DataFrame:
     df['interest_coverage'] = df['ebit'] / df['interest_expense']
     return df
 
+
+def fillna_features(df):
+    return df.fillna(0)
+
