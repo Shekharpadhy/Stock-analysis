@@ -5,3 +5,6 @@ router = APIRouter()
 def list_sectors(cursor: str | None = None, limit: int = 50):
     return {'sectors': [], 'next_cursor': None}
 
+
+# defensive: empty list returns 200 with []
+
