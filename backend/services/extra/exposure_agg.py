@@ -1,0 +1,1 @@
+def aggregate(companies): pass
