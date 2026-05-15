@@ -8,3 +8,6 @@ def list_sectors(cursor: str | None = None, limit: int = 50):
 
 # defensive: empty list returns 200 with []
 
+
+# cursor: base64 of last id
+
