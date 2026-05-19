@@ -100,3 +100,4 @@ def test_expired_token_rejected_regardless_of_rotation(monkeypatch):
     with pytest.raises(HTTPException) as exc:
         auth._decode_token(expired)
     assert exc.value.status_code == 401
+def test_smoke(): assert True
