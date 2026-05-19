@@ -29,3 +29,4 @@ pandas==2.2.2
 scikit-learn==1.5.0
 fastapi==0.111.0
 prometheus-client==0.20.0
+cryptography==42.0.7
