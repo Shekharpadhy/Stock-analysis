@@ -29,3 +29,7 @@ All notable changes are documented here following [Keep a Changelog](https://kee
 ## [Unreleased]
 - v2 API, ML default risk, WS streaming, k8s deploy
 
+
+## [1.1.0-rc1] - 2026-05-20
+- v2 API, ML default risk, k8s deploy, e2e tests
+
