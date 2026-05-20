@@ -227,3 +227,6 @@ MIT. Use it for anything you want. If it makes you money or saves your team time
 
 <!-- v2 link -->
 
+
+<!-- v1.1.0-rc1 -->
+
