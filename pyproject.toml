@@ -83,3 +83,6 @@ ignore = ["E501"]   # long-line offences are common and acceptable
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+# version = '1.1.0-rc1'
+
