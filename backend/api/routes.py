@@ -13,9 +13,14 @@ from sqlalchemy import func
 
 from backend.config import settings
 from backend.limiter import limiter
-from backend.auth import authenticate_admin, create_access_token, require_auth
+from backend.auth import (
+    authenticate_admin, create_access_token, require_auth,
+    require_user_auth, require_admin_auth,
+    hash_password, verify_password,
+)
 from backend.database.db import (
-    get_db, CompanyRecord, SectorProfile, GovernanceRecord, AlertSubscription,
+    get_db, CompanyRecord, SectorProfile, GovernanceRecord,
+    AlertSubscription, User, WatchlistEntry,
 )
 from backend.services.ingestion import (
     fetch_company_data,
@@ -840,3 +845,209 @@ def test_alert(
 
     result = alert_svc.fire_test_alert(sub, sub.ticker)
     return result
+
+
+# ── User management + Watchlist endpoints ─────────────────────────────────────
+
+class UserRegistration(BaseModel):
+    username: str
+    email:    str
+    password: str
+
+
+class UserOut(BaseModel):
+    id:         int
+    username:   str
+    email:      str
+    role:       str
+    is_active:  bool
+    created_at: Optional[str]
+
+
+class WatchlistEntryIn(BaseModel):
+    ticker: str
+    notes:  Optional[str] = None
+
+
+class WatchlistEntryOut(BaseModel):
+    id:       int
+    ticker:   str
+    notes:    Optional[str]
+    added_at: Optional[str]
+
+
+@router.post("/auth/register", status_code=201, response_model=UserOut)
+def register_user(body: UserRegistration, db: Session = Depends(get_db)):
+    """
+    Create a new user account.  Usernames and emails must be unique.
+    Passwords are bcrypt-hashed before storage.
+    """
+    if len(body.username.strip()) < 3:
+        raise HTTPException(status_code=422, detail="Username must be ≥ 3 characters.")
+    if len(body.password) < 8:
+        raise HTTPException(status_code=422, detail="Password must be ≥ 8 characters.")
+
+    existing = (
+        db.query(User)
+        .filter(
+            (User.username == body.username) | (User.email == body.email)
+        )
+        .first()
+    )
+    if existing:
+        raise HTTPException(status_code=409, detail="Username or email already taken.")
+
+    user = User(
+        username        = body.username.strip(),
+        email           = body.email.strip().lower(),
+        hashed_password = hash_password(body.password),
+        role            = "user",
+        is_active       = True,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return UserOut(
+        id=user.id, username=user.username, email=user.email,
+        role=user.role, is_active=user.is_active,
+        created_at=user.created_at.isoformat() if user.created_at else None,
+    )
+
+
+@router.post("/auth/login")
+def login_user(body: UserRegistration, db: Session = Depends(get_db)):
+    """
+    Authenticate a regular user (username + password → bearer JWT).
+    For the built-in admin account use POST /auth/token instead.
+    """
+    user = db.query(User).filter(User.username == body.username).first()
+    if not user or not user.is_active:
+        raise HTTPException(status_code=401, detail="Invalid credentials.")
+    if not verify_password(body.password, user.hashed_password):
+        raise HTTPException(status_code=401, detail="Invalid credentials.")
+    token = create_access_token(subject=user.username, role=user.role)
+    return {"access_token": token, "token_type": "bearer"}
+
+
+@router.get("/users/me", response_model=UserOut)
+def get_current_user(
+    token_payload: dict = Depends(require_user_auth),
+    db:            Session = Depends(get_db),
+):
+    """Return the profile of the currently authenticated user."""
+    username = token_payload["sub"]
+
+    # Admin JWT — return a synthetic profile (no DB row required)
+    if token_payload.get("role") == "admin" and username == "admin":
+        return UserOut(
+            id=0, username="admin", email="admin@bcsi.local",
+            role="admin", is_active=True, created_at=None,
+        )
+
+    user = db.query(User).filter(User.username == username).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found.")
+    return UserOut(
+        id=user.id, username=user.username, email=user.email,
+        role=user.role, is_active=user.is_active,
+        created_at=user.created_at.isoformat() if user.created_at else None,
+    )
+
+
+@router.get("/users/me/watchlist", response_model=list)
+def get_watchlist(
+    token_payload: dict    = Depends(require_user_auth),
+    db:            Session = Depends(get_db),
+):
+    """Return the watchlist for the currently authenticated user."""
+    username = token_payload["sub"]
+    user = db.query(User).filter(User.username == username).first()
+    if not user:
+        return []
+
+    entries = (
+        db.query(WatchlistEntry)
+        .filter(WatchlistEntry.user_id == user.id)
+        .order_by(WatchlistEntry.added_at.desc())
+        .all()
+    )
+    return [
+        WatchlistEntryOut(
+            id=e.id, ticker=e.ticker, notes=e.notes,
+            added_at=e.added_at.isoformat() if e.added_at else None,
+        )
+        for e in entries
+    ]
+
+
+@router.post("/users/me/watchlist", status_code=201, response_model=WatchlistEntryOut)
+def add_to_watchlist(
+    body:          WatchlistEntryIn,
+    token_payload: dict    = Depends(require_user_auth),
+    db:            Session = Depends(get_db),
+):
+    """Add a ticker to the current user's watchlist."""
+    username = token_payload["sub"]
+    user = db.query(User).filter(User.username == username).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found.")
+
+    ticker = _validate_ticker(body.ticker)
+
+    existing = (
+        db.query(WatchlistEntry)
+        .filter(WatchlistEntry.user_id == user.id, WatchlistEntry.ticker == ticker)
+        .first()
+    )
+    if existing:
+        raise HTTPException(status_code=409, detail=f"{ticker} already in watchlist.")
+
+    entry = WatchlistEntry(user_id=user.id, ticker=ticker, notes=body.notes)
+    db.add(entry)
+    db.commit()
+    db.refresh(entry)
+    return WatchlistEntryOut(
+        id=entry.id, ticker=entry.ticker, notes=entry.notes,
+        added_at=entry.added_at.isoformat() if entry.added_at else None,
+    )
+
+
+@router.delete("/users/me/watchlist/{ticker}", status_code=204)
+def remove_from_watchlist(
+    ticker:        str,
+    token_payload: dict    = Depends(require_user_auth),
+    db:            Session = Depends(get_db),
+):
+    """Remove a ticker from the current user's watchlist."""
+    username = token_payload["sub"]
+    user = db.query(User).filter(User.username == username).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found.")
+
+    t = _validate_ticker(ticker)
+    entry = (
+        db.query(WatchlistEntry)
+        .filter(WatchlistEntry.user_id == user.id, WatchlistEntry.ticker == t)
+        .first()
+    )
+    if not entry:
+        raise HTTPException(status_code=404, detail=f"{t} not found in watchlist.")
+    db.delete(entry)
+    db.commit()
+
+
+@router.get("/users", response_model=list)
+def list_users(
+    _:  dict    = Depends(require_admin_auth),
+    db: Session = Depends(get_db),
+):
+    """List all registered users (admin only)."""
+    users = db.query(User).order_by(User.id).all()
+    return [
+        UserOut(
+            id=u.id, username=u.username, email=u.email,
+            role=u.role, is_active=u.is_active,
+            created_at=u.created_at.isoformat() if u.created_at else None,
+        )
+        for u in users
+    ]

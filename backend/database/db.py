@@ -289,6 +289,48 @@ class AlertSubscription(Base):
     )
 
 
+class User(Base):
+    """
+    A registered platform user.
+
+    Role values: "user" (default) | "admin"
+    The admin role grants access to protected management endpoints.
+
+    The built-in admin account (configured via env ADMIN_USERNAME /
+    ADMIN_PASSWORD) never needs a DB row — it uses the legacy admin-credential
+    check in auth.authenticate_admin(). Regular users created via
+    POST /auth/register do get a DB row and authenticate with a hashed password.
+    """
+    __tablename__ = "users"
+
+    id              = Column(Integer, primary_key=True, autoincrement=True)
+    username        = Column(String, unique=True, nullable=False, index=True)
+    email           = Column(String, unique=True, nullable=False, index=True)
+    hashed_password = Column(String, nullable=False)
+    role            = Column(String, default="user", nullable=False)   # "user" | "admin"
+    is_active       = Column(Boolean, default=True, nullable=False)
+    created_at      = Column(DateTime, default=datetime.utcnow)
+
+
+class WatchlistEntry(Base):
+    """
+    A single ticker in a user's watchlist.
+
+    The `notes` field is an optional free-text memo (e.g. "bought at 145").
+    """
+    __tablename__ = "watchlist"
+
+    id       = Column(Integer, primary_key=True, autoincrement=True)
+    user_id  = Column(Integer, nullable=False, index=True)
+    ticker   = Column(String, nullable=False, index=True)
+    notes    = Column(Text)
+    added_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "ticker", name="uq_watchlist_user_ticker"),
+    )
+
+
 def get_db():
     db = SessionLocal()
     try:
