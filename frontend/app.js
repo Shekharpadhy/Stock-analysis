@@ -402,6 +402,110 @@ function renderDetail(c, peers, risk, bcsiData) {
   $("companyDetail").scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
+/* ── WebSocket price stream ───────────────────────────────────────────────── */
+const WS_URL = `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/api/v1/ws/prices`;
+const WS_RECONNECT_BASE  = 2000;   // ms — initial back-off delay
+const WS_RECONNECT_MAX   = 30000;  // ms — cap back-off at 30 s
+const WS_SILENCE_TIMEOUT = 70000;  // ms — reconnect if no msg for 70 s
+
+let _ws          = null;
+let _wsReconnect = WS_RECONNECT_BASE;
+let _wsSilenceTimer = null;
+
+// price cache: ticker → last known price (populated from snapshot/updates)
+const _priceCache = {};
+
+function _setLiveStatus(state) {
+  // state: "connecting" | "live" | "delayed" | "offline"
+  const el    = $("liveIndicator");
+  const label = $("liveLabel");
+  if (!el) return;
+  el.className = `live-indicator live-${state}`;
+  const text = {
+    connecting: "connecting…",
+    live:       "● live",
+    delayed:    "● delayed",
+    offline:    "○ offline",
+  };
+  label.textContent = text[state] ?? state;
+}
+
+function _resetSilenceTimer() {
+  clearTimeout(_wsSilenceTimer);
+  _wsSilenceTimer = setTimeout(() => {
+    console.warn("ws:prices  silence timeout — reconnecting");
+    if (_ws) _ws.close();
+  }, WS_SILENCE_TIMEOUT);
+}
+
+/** Flash a table cell price value up (green) or down (red). */
+function _flashPrice(ticker, newPrice) {
+  const old = _priceCache[ticker];
+  _priceCache[ticker] = newPrice;
+
+  // Find the row in the companies table
+  const row = document.querySelector(`#companiesBody tr[data-ticker="${ticker}"]`);
+  if (!row) return;
+
+  // The current_price isn't directly in the table — update the title attribute
+  // of the ticker cell so the tooltip shows the live price, and flash the row.
+  const cls = old == null ? "" : newPrice > old ? "flash-up" : newPrice < old ? "flash-down" : "";
+  if (cls) {
+    row.classList.add(cls);
+    setTimeout(() => row.classList.remove(cls), 1200);
+  }
+  row.title = `Live price: $${newPrice.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+}
+
+function _handlePriceMessage(msg) {
+  _resetSilenceTimer();
+  const { type, data, note } = msg;
+
+  if (type === "heartbeat") return;
+
+  if (type === "price_snapshot" || type === "price_update") {
+    _setLiveStatus(note && note.includes("delayed") ? "delayed" : "live");
+    if (Array.isArray(data)) {
+      data.forEach(({ ticker, price, change_pct }) => {
+        if (ticker && price != null) _flashPrice(ticker, price);
+      });
+    }
+  }
+}
+
+function initPriceStream() {
+  _setLiveStatus("connecting");
+
+  try {
+    _ws = new WebSocket(WS_URL);
+  } catch (e) {
+    _setLiveStatus("offline");
+    return;
+  }
+
+  _ws.onopen = () => {
+    _wsReconnect = WS_RECONNECT_BASE;   // reset back-off on success
+    _resetSilenceTimer();
+    console.info("ws:prices  connected");
+  };
+
+  _ws.onmessage = (event) => {
+    try {
+      _handlePriceMessage(JSON.parse(event.data));
+    } catch { /* ignore malformed messages */ }
+  };
+
+  _ws.onerror = () => _setLiveStatus("offline");
+
+  _ws.onclose = () => {
+    clearTimeout(_wsSilenceTimer);
+    _setLiveStatus("offline");
+    console.info(`ws:prices  closed — reconnecting in ${_wsReconnect / 1000}s`);
+    setTimeout(initPriceStream, _wsReconnect);
+    _wsReconnect = Math.min(_wsReconnect * 2, WS_RECONNECT_MAX);
+  };
+}
+
 /* ── analyze action ───────────────────────────────────────────────────────── */
 async function analyzeCompany() {
   const input  = $("tickerInput");
@@ -436,6 +540,7 @@ function init() {
   });
   loadCompanies();
   loadSectorChart();
+  initPriceStream();
 }
 
 // expose inline-referenced handlers

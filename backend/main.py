@@ -1,3 +1,5 @@
+import asyncio
+import logging
 import os
 from contextlib import asynccontextmanager
 
@@ -12,14 +14,31 @@ from slowapi.middleware import SlowAPIMiddleware
 from backend.config import settings
 from backend.database.db import init_db
 from backend.api.routes import router
+from backend.api.ws import router as ws_router
 from backend.limiter import limiter
+from backend.services.price_stream import price_broadcast_loop
+
+log = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    # Bring the schema up to date (Alembic) before serving traffic.
+    # 1. Bring the schema up to date (Alembic) before serving traffic.
     init_db()
+
+    # 2. Start the background price-broadcast loop.
+    broadcast_task = asyncio.create_task(price_broadcast_loop())
+    log.info("price_stream: broadcast loop started")
+
     yield
+
+    # 3. Graceful shutdown — cancel the broadcast task.
+    broadcast_task.cancel()
+    try:
+        await broadcast_task
+    except asyncio.CancelledError:
+        pass
+    log.info("price_stream: broadcast loop stopped")
 
 
 app = FastAPI(
@@ -45,7 +64,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(router, prefix="/api/v1")
+app.include_router(router,    prefix="/api/v1")
+app.include_router(ws_router, prefix="/api/v1")
 
 frontend_path = os.path.join(os.path.dirname(__file__), "..", "frontend")
 if os.path.exists(frontend_path):

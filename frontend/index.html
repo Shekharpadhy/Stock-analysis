@@ -16,9 +16,15 @@
           <p class="subtitle">Banking Client Research Dashboard</p>
         </div>
       </div>
-      <div class="search-bar">
-        <input id="tickerInput" type="text" placeholder="Enter ticker (e.g. AAPL, JPM, BAC)" />
-        <button id="analyzeBtn" onclick="analyzeCompany()">Analyze</button>
+      <div class="header-right">
+        <div id="liveIndicator" class="live-indicator live-connecting" title="Price stream status">
+          <span class="live-dot"></span>
+          <span id="liveLabel">connecting…</span>
+        </div>
+        <div class="search-bar">
+          <input id="tickerInput" type="text" placeholder="Enter ticker (e.g. AAPL, JPM, BAC)" />
+          <button id="analyzeBtn" onclick="analyzeCompany()">Analyze</button>
+        </div>
       </div>
     </div>
   </header>
