@@ -52,7 +52,7 @@ def test_no_crash_when_redis_unreachable(monkeypatch):
 # ── fetch_company_data caching behaviour ──────────────────────────────────────
 def test_fetch_company_data_hits_cache_on_second_call(fake_redis, monkeypatch):
     """Second analysis of the same ticker must NOT re-hit yfinance."""
-    calls = {"fetch": 0, "advanced": 0}
+    calls = {"fetch": 0, "advanced": 0, "quality": 0}
 
     def fake_fetch(ticker):
         calls["fetch"] += 1
@@ -62,14 +62,24 @@ def test_fetch_company_data_hits_cache_on_second_call(fake_redis, monkeypatch):
         calls["advanced"] += 1
         return {"altman": {}, "beneish": {}, "icr": None, "fcf_margin": None}
 
+    def fake_quality(_ticker_obj, _raw):
+        calls["quality"] += 1
+        return {"quality_score": 50.0, "quality_label": "Adequate",
+                "piotroski": {"f_score": 5, "max": 9, "criteria": {}},
+                "graham_number": None,
+                "magic_formula": {"earnings_yield_pct": None,
+                                  "return_on_capital_pct": None}}
+
     monkeypatch.setattr(ingestion, "fetch_yahoo_fundamentals_full", fake_fetch)
     monkeypatch.setattr(ingestion, "compute_all_advanced", fake_advanced)
+    monkeypatch.setattr(ingestion, "compute_quality", fake_quality)
 
     first  = ingestion.fetch_company_data("AAPL")
     second = ingestion.fetch_company_data("AAPL")
 
     assert calls["fetch"] == 1        # yfinance hit exactly once
     assert calls["advanced"] == 1     # advanced scores computed once
+    assert calls["quality"] == 1      # quality computed once
     assert first == second            # cached payload equals the fresh one
 
 
@@ -82,6 +92,8 @@ def test_fetch_company_data_separate_keys_per_ticker(fake_redis, monkeypatch):
 
     monkeypatch.setattr(ingestion, "fetch_yahoo_fundamentals_full", fake_fetch)
     monkeypatch.setattr(ingestion, "compute_all_advanced", lambda _o: {"altman": {}})
+    monkeypatch.setattr(ingestion, "compute_quality",
+                        lambda _o, _raw: {"quality_score": None, "quality_label": "Unknown"})
 
     ingestion.fetch_company_data("AAPL")
     ingestion.fetch_company_data("MSFT")

@@ -3,6 +3,7 @@ import requests
 from typing import Optional
 from backend.config import settings
 from backend.services.advanced_scores import compute_all_advanced
+from backend.services.quality import compute_quality
 from backend.services import cache
 
 
@@ -117,27 +118,33 @@ def fetch_yahoo_fundamentals(ticker: str) -> dict:
     return data
 
 
-def fetch_company_data(ticker: str) -> tuple[dict, dict]:
+def fetch_company_data(ticker: str) -> tuple[dict, dict, dict]:
     """
-    Fetch fundamentals + advanced scores for a ticker, returning two plain
-    JSON-serialisable dicts: (raw_fundamentals, advanced_scores).
+    Fetch fundamentals + advanced scores + quality scores for a ticker,
+    returning three plain JSON-serialisable dicts: (raw, advanced, quality).
 
     The combined result is cached in Redis for settings.cache_ttl seconds, so
     repeated analysis of the same ticker within the window does NOT re-hit
     Yahoo Finance (which rate-limits aggressively). If Redis is unreachable the
-    cache transparently no-ops and every call fetches fresh.
+    cache transparently no-ops and every call fetches fresh. The cache key is
+    versioned ("yfc:v2:") — bumped when the payload shape changes so old
+    entries do not poison a new schema.
     """
     ticker = ticker.upper()
-    key = f"yfc:v1:{ticker}"
+    key = f"yfc:v2:{ticker}"
 
     cached = cache.cache_get(key)
     if cached is not None:
-        return cached["raw"], cached["advanced"]
+        return cached["raw"], cached["advanced"], cached["quality"]
 
     raw, ticker_obj = fetch_yahoo_fundamentals_full(ticker)
     advanced = compute_all_advanced(ticker_obj)
-    cache.cache_set(key, {"raw": raw, "advanced": advanced}, settings.cache_ttl)
-    return raw, advanced
+    quality  = compute_quality(ticker_obj, raw)
+    cache.cache_set(
+        key, {"raw": raw, "advanced": advanced, "quality": quality},
+        settings.cache_ttl,
+    )
+    return raw, advanced, quality
 
 
 # ── SEC EDGAR ─────────────────────────────────────────────────────────────────

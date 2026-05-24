@@ -114,6 +114,18 @@ class CompanyRecord(Base):
     trim_level      = Column(Float)
     hard_stop       = Column(Float)
 
+    # ── Quality dimension (Piotroski / Graham / Magic Formula) ────
+    quality_score     = Column(Float)
+    quality_label     = Column(String)
+    piotroski_f_score = Column(Integer)
+    graham_number     = Column(Float)
+
+    # ── BCSI composite (the headline number) ──────────────────────
+    bcsi_score      = Column(Float)
+    bcsi_label      = Column(String)
+    bcsi_dimensions = Column(Text)     # JSON: {risk,quality,valuation,governance}
+    bcsi_confidence = Column(Float)
+
     # ── Metadata ──────────────────────────────────────────────────
     last_updated = Column(DateTime, default=datetime.utcnow)
 

@@ -14,7 +14,9 @@ from sqlalchemy import func
 from backend.config import settings
 from backend.limiter import limiter
 from backend.auth import authenticate_admin, create_access_token, require_auth
-from backend.database.db import get_db, CompanyRecord, SectorProfile, GovernanceRecord
+from backend.database.db import (
+    get_db, CompanyRecord, SectorProfile, GovernanceRecord,
+)
 from backend.services.ingestion import (
     fetch_company_data,
     lookup_cik_by_ticker,
@@ -31,6 +33,7 @@ from backend.services.calibration import (
     recalibrate_sector_profiles, get_calibrated_profiles, reliability_report,
 )
 from backend.services.governance import compute_governance_score
+from backend.services.bcsi import compute_bcsi
 
 router = APIRouter()
 log = logging.getLogger(__name__)
@@ -109,8 +112,8 @@ async def analyze_company(request: Request, ticker: str, db: Session = Depends(g
     t = _validate_ticker(ticker)
 
     try:
-        # Combined fundamentals + advanced scores, cached in Redis for 15 min.
-        raw, advanced = await asyncio.to_thread(fetch_company_data, t)
+        # Combined fundamentals + advanced scores + quality, cached in Redis 15 min.
+        raw, advanced, quality = await asyncio.to_thread(fetch_company_data, t)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -126,6 +129,15 @@ async def analyze_company(request: Request, ticker: str, db: Session = Depends(g
 
     # Valuation + price targets
     valuation = compute_valuation(raw, sector)
+
+    # BCSI composite — pull governance from DB if it exists for this ticker
+    gov_rec = db.query(GovernanceRecord).filter(GovernanceRecord.ticker == t).first()
+    governance_for_bcsi = (
+        {"governance_score": gov_rec.governance_score}
+        if gov_rec and gov_rec.governance_score is not None
+        else None
+    )
+    bcsi = compute_bcsi(ensemble, valuation, quality, governance_for_bcsi)
 
     # Flatten all results into a single dict for DB upsert
     record_data = {
@@ -166,6 +178,16 @@ async def analyze_company(request: Request, ticker: str, db: Session = Depends(g
         "entry_zone_high": valuation["entry_zone_high"],
         "trim_level":      valuation["trim_level"],
         "hard_stop":       valuation["hard_stop"],
+        # Quality
+        "quality_score":     quality.get("quality_score"),
+        "quality_label":     quality.get("quality_label"),
+        "piotroski_f_score": quality.get("piotroski", {}).get("f_score"),
+        "graham_number":     quality.get("graham_number"),
+        # BCSI composite
+        "bcsi_score":      bcsi["bcsi_score"],
+        "bcsi_label":      bcsi["bcsi_label"],
+        "bcsi_dimensions": json.dumps(bcsi["dimensions"]),
+        "bcsi_confidence": bcsi["confidence"],
     }
 
     rec = db.query(CompanyRecord).filter(CompanyRecord.ticker == t).first()
@@ -296,6 +318,32 @@ def get_risk(ticker: str, db: Session = Depends(get_db)):
         "components": json.loads(rec.risk_components) if rec.risk_components else {},
         "flags":      json.loads(rec.risk_flags)       if rec.risk_flags      else [],
         "last_updated": rec.last_updated.isoformat() if rec.last_updated else None,
+    }
+
+
+# ── BCSI composite ────────────────────────────────────────────────────────────
+@router.get("/companies/{ticker}/bcsi")
+def get_bcsi(ticker: str, db: Session = Depends(get_db)):
+    """BCSI composite score with per-dimension breakdown and coverage confidence."""
+    t   = _validate_ticker(ticker)
+    rec = db.query(CompanyRecord).filter(CompanyRecord.ticker == t).first()
+    if not rec:
+        raise HTTPException(status_code=404, detail="Company not found.")
+    return {
+        "ticker":         rec.ticker,
+        "name":           rec.name,
+        "bcsi_score":     rec.bcsi_score,
+        "bcsi_label":     rec.bcsi_label,
+        "bcsi_confidence": rec.bcsi_confidence,
+        "dimensions":     json.loads(rec.bcsi_dimensions) if rec.bcsi_dimensions else {},
+        "quality": {
+            "quality_score":     rec.quality_score,
+            "quality_label":     rec.quality_label,
+            "piotroski_f_score": rec.piotroski_f_score,
+            "graham_number":     rec.graham_number,
+        },
+        "momentum_status": "pending — Phase 7 (sentiment + technicals + signals)",
+        "last_updated":   rec.last_updated.isoformat() if rec.last_updated else None,
     }
 
 
@@ -616,6 +664,16 @@ def _serialize(rec: CompanyRecord) -> dict:
         "entry_zone_high": rec.entry_zone_high,
         "trim_level":      rec.trim_level,
         "hard_stop":       rec.hard_stop,
+        # Quality
+        "quality_score":     rec.quality_score,
+        "quality_label":     rec.quality_label,
+        "piotroski_f_score": rec.piotroski_f_score,
+        "graham_number":     rec.graham_number,
+        # BCSI composite
+        "bcsi_score":      rec.bcsi_score,
+        "bcsi_label":      rec.bcsi_label,
+        "bcsi_confidence": rec.bcsi_confidence,
+        "bcsi_dimensions": json.loads(rec.bcsi_dimensions) if rec.bcsi_dimensions else {},
         # Meta
         "last_updated": rec.last_updated.isoformat() if rec.last_updated else None,
     }
