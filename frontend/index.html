@@ -24,32 +24,41 @@
   </header>
 
   <main>
+    <!-- Stats row: BCSI distribution + company counts -->
     <section class="stats-row" id="statsRow">
       <div class="stat-card">
         <div class="stat-label">Companies Tracked</div>
         <div class="stat-value" id="totalCompanies">—</div>
       </div>
-      <div class="stat-card high">
-        <div class="stat-label">High Risk</div>
-        <div class="stat-value" id="highRisk">—</div>
+      <div class="stat-card bcsi-strong">
+        <div class="stat-label">BCSI Strong</div>
+        <div class="stat-value" id="bcsiStrong">—</div>
       </div>
-      <div class="stat-card medium">
-        <div class="stat-label">Medium Risk</div>
-        <div class="stat-value" id="medRisk">—</div>
+      <div class="stat-card bcsi-fair">
+        <div class="stat-label">BCSI Fair</div>
+        <div class="stat-value" id="bcsiFair">—</div>
       </div>
-      <div class="stat-card low">
-        <div class="stat-label">Low Risk</div>
-        <div class="stat-value" id="lowRisk">—</div>
+      <div class="stat-card bcsi-watch">
+        <div class="stat-label">BCSI Watch / Weak</div>
+        <div class="stat-value" id="bcsiWatchWeak">—</div>
       </div>
     </section>
 
     <section class="grid-two">
+      <!-- Companies table -->
       <div class="panel">
         <div class="panel-header">
           <h2>Sector Overview</h2>
           <div class="filters">
+            <select id="bcsiFilter" onchange="filterCompanies()">
+              <option value="">All BCSI</option>
+              <option value="Strong">Strong</option>
+              <option value="Fair">Fair</option>
+              <option value="Watch">Watch</option>
+              <option value="Weak">Weak</option>
+            </select>
             <select id="riskFilter" onchange="filterCompanies()">
-              <option value="">All Risk Levels</option>
+              <option value="">All Risk</option>
               <option value="High Risk">High Risk</option>
               <option value="Medium Risk">Medium Risk</option>
               <option value="Low Risk">Low Risk</option>
@@ -66,9 +75,9 @@
                 <th>Ticker</th>
                 <th>Company</th>
                 <th>Sector</th>
-                <th>Revenue Growth</th>
+                <th>BCSI</th>
+                <th>Rev Growth</th>
                 <th>Net Margin</th>
-                <th>Risk Score</th>
                 <th>Risk</th>
               </tr>
             </thead>
@@ -79,13 +88,17 @@
         </div>
       </div>
 
+      <!-- Sector chart -->
       <div class="panel">
         <h2>Sector Benchmarks</h2>
         <div id="sectorChart" class="sector-bars"></div>
       </div>
     </section>
 
+    <!-- ── Company Detail Panel ─────────────────────────────────────────── -->
     <section id="companyDetail" class="panel detail-panel hidden">
+
+      <!-- Detail header: name + badges -->
       <div class="detail-header">
         <div>
           <h2 id="detailName">—</h2>
@@ -95,14 +108,85 @@
         <div id="detailRiskBadge" class="risk-badge-large">—</div>
       </div>
 
-      <div class="metrics-grid" id="metricsGrid"></div>
-
-      <div class="flags-section" id="flagsSection"></div>
-
-      <div class="peers-section">
-        <h3>Peer Comparison</h3>
-        <div id="peersTable"></div>
+      <!-- BCSI hero — always visible headline -->
+      <div class="bcsi-hero" id="bcsiHero">
+        <div class="bcsi-hero-score">
+          <div class="bcsi-score-big" id="bcsiScoreBig">—</div>
+          <div>
+            <div class="bcsi-label-chip" id="bcsiLabelChip">—</div>
+            <div class="bcsi-confidence" id="bcsiConfidence">—</div>
+          </div>
+        </div>
+        <div class="bcsi-dims" id="bcsiDims">
+          <!-- dimension bars rendered by JS -->
+        </div>
       </div>
+
+      <!-- Accordion sections -->
+      <div class="accordion" id="accordion">
+
+        <!-- Market Snapshot -->
+        <div class="accordion-section open" data-section="snapshot">
+          <button class="accordion-header" onclick="toggleSection('snapshot')">
+            <span>Market Snapshot</span><span class="acc-arrow">▾</span>
+          </button>
+          <div class="accordion-body" id="section-snapshot">
+            <div class="metrics-grid" id="metricsSnapshot"></div>
+          </div>
+        </div>
+
+        <!-- Risk Analysis -->
+        <div class="accordion-section" data-section="risk">
+          <button class="accordion-header" onclick="toggleSection('risk')">
+            <span>Risk Analysis</span><span class="acc-arrow">▾</span>
+          </button>
+          <div class="accordion-body" id="section-risk">
+            <div class="metrics-grid" id="metricsRisk"></div>
+            <div class="flags-section" id="flagsSection"></div>
+          </div>
+        </div>
+
+        <!-- Quality -->
+        <div class="accordion-section" data-section="quality">
+          <button class="accordion-header" onclick="toggleSection('quality')">
+            <span>Quality Analysis</span><span class="acc-arrow">▾</span>
+          </button>
+          <div class="accordion-body" id="section-quality">
+            <div class="metrics-grid" id="metricsQuality"></div>
+          </div>
+        </div>
+
+        <!-- Price Targets -->
+        <div class="accordion-section" data-section="targets">
+          <button class="accordion-header" onclick="toggleSection('targets')">
+            <span>Price Targets</span><span class="acc-arrow">▾</span>
+          </button>
+          <div class="accordion-body" id="section-targets">
+            <div class="metrics-grid" id="metricsTargets"></div>
+          </div>
+        </div>
+
+        <!-- Action Levels -->
+        <div class="accordion-section" data-section="action">
+          <button class="accordion-header" onclick="toggleSection('action')">
+            <span>Action Levels</span><span class="acc-arrow">▾</span>
+          </button>
+          <div class="accordion-body" id="section-action">
+            <div class="metrics-grid" id="metricsAction"></div>
+          </div>
+        </div>
+
+        <!-- Peers -->
+        <div class="accordion-section" data-section="peers">
+          <button class="accordion-header" onclick="toggleSection('peers')">
+            <span>Peer Comparison</span><span class="acc-arrow">▾</span>
+          </button>
+          <div class="accordion-body" id="section-peers">
+            <div id="peersTable"></div>
+          </div>
+        </div>
+
+      </div><!-- /accordion -->
     </section>
   </main>
 
