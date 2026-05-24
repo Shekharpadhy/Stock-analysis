@@ -29,5 +29,19 @@ class Settings(BaseSettings):
     # Self-scoring track record — comma-separated prediction horizons (months)
     prediction_horizons: str = "3,6,12"
 
+    # ── Alert delivery ─────────────────────────────────────────────────────────
+    # SMTP email alerts (leave empty to disable)
+    alert_smtp_host: str = ""
+    alert_smtp_port: int = 587
+    alert_smtp_user: str = ""
+    alert_smtp_password: str = ""
+    alert_email_from: str = "alerts@bcsi.example.com"
+
+    # Slack webhook URL (leave empty to disable)
+    alert_slack_webhook: str = ""
+
+    # Risk-score threshold above which an alert fires (0–100)
+    alert_risk_threshold: float = 70.0
+
 
 settings = Settings()

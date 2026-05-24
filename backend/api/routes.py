@@ -15,7 +15,7 @@ from backend.config import settings
 from backend.limiter import limiter
 from backend.auth import authenticate_admin, create_access_token, require_auth
 from backend.database.db import (
-    get_db, CompanyRecord, SectorProfile, GovernanceRecord,
+    get_db, CompanyRecord, SectorProfile, GovernanceRecord, AlertSubscription,
 )
 from backend.services.ingestion import (
     fetch_company_data,
@@ -35,6 +35,7 @@ from backend.services.calibration import (
 from backend.services.governance import compute_governance_score
 from backend.services.bcsi import compute_bcsi
 from backend.services import ml_model
+from backend.services import alerts as alert_svc
 
 router = APIRouter()
 log = logging.getLogger(__name__)
@@ -714,3 +715,128 @@ def _serialize(rec: CompanyRecord) -> dict:
         # Meta
         "last_updated": rec.last_updated.isoformat() if rec.last_updated else None,
     }
+
+
+# ── Alert endpoints ───────────────────────────────────────────────────────────
+
+class AlertSubscriptionIn(BaseModel):
+    ticker:        str
+    condition:     str
+    threshold:     Optional[float] = None
+    email:         Optional[str]   = None
+    slack_webhook: Optional[str]   = None
+
+
+class AlertSubscriptionOut(BaseModel):
+    id:            int
+    ticker:        str
+    condition:     str
+    threshold:     Optional[float]
+    email:         Optional[str]
+    slack_webhook: Optional[str]
+    active:        bool
+
+
+@router.get("/alerts/config")
+def alerts_config():
+    """Return the current alert channel configuration (no secrets)."""
+    return alert_svc.get_config()
+
+
+@router.get("/alerts/subscriptions")
+def list_subscriptions(
+    ticker: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """List all active alert subscriptions, optionally filtered by ticker."""
+    q = db.query(AlertSubscription).filter(AlertSubscription.active.is_(True))
+    if ticker:
+        q = q.filter(AlertSubscription.ticker == ticker.upper())
+    subs = q.order_by(AlertSubscription.id).all()
+    return [
+        AlertSubscriptionOut(
+            id=s.id, ticker=s.ticker, condition=s.condition,
+            threshold=s.threshold, email=s.email,
+            slack_webhook=s.slack_webhook, active=s.active,
+        )
+        for s in subs
+    ]
+
+
+@router.post("/alerts/subscriptions", status_code=201)
+def create_subscription(
+    body: AlertSubscriptionIn,
+    db:   Session = Depends(get_db),
+    _:    str     = Depends(require_auth),
+):
+    """
+    Create a new alert subscription.  At least one of `email` or
+    `slack_webhook` must be provided; the condition must be one of
+    the values returned by GET /alerts/config.
+    """
+    if body.condition not in alert_svc.VALID_CONDITIONS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unknown condition {body.condition!r}. "
+                   f"Valid: {sorted(alert_svc.VALID_CONDITIONS)}",
+        )
+    if not body.email and not body.slack_webhook:
+        raise HTTPException(
+            status_code=422,
+            detail="At least one of 'email' or 'slack_webhook' must be provided.",
+        )
+
+    ticker = _validate_ticker(body.ticker)
+    sub = AlertSubscription(
+        ticker        = ticker,
+        condition     = body.condition,
+        threshold     = body.threshold,
+        email         = body.email,
+        slack_webhook = body.slack_webhook,
+        active        = True,
+    )
+    db.add(sub)
+    try:
+        db.commit()
+        db.refresh(sub)
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=f"Subscription already exists: {exc}")
+
+    return AlertSubscriptionOut(
+        id=sub.id, ticker=sub.ticker, condition=sub.condition,
+        threshold=sub.threshold, email=sub.email,
+        slack_webhook=sub.slack_webhook, active=sub.active,
+    )
+
+
+@router.delete("/alerts/subscriptions/{sub_id}", status_code=204)
+def delete_subscription(
+    sub_id: int,
+    db:     Session = Depends(get_db),
+    _:      str     = Depends(require_auth),
+):
+    """Deactivate (soft-delete) an alert subscription."""
+    sub = db.query(AlertSubscription).filter(AlertSubscription.id == sub_id).first()
+    if not sub:
+        raise HTTPException(status_code=404, detail=f"Subscription {sub_id} not found.")
+    sub.active = False
+    db.commit()
+
+
+@router.post("/alerts/test/{sub_id}")
+def test_alert(
+    sub_id: int,
+    db:     Session = Depends(get_db),
+    _:      str     = Depends(require_auth),
+):
+    """
+    Fire an unconditional test alert for the given subscription.
+    Useful for verifying email / Slack delivery without waiting for a trigger.
+    """
+    sub = db.query(AlertSubscription).filter(AlertSubscription.id == sub_id).first()
+    if not sub:
+        raise HTTPException(status_code=404, detail=f"Subscription {sub_id} not found.")
+
+    result = alert_svc.fire_test_alert(sub, sub.ticker)
+    return result

@@ -251,6 +251,44 @@ class GovernanceRecord(Base):
     updated_at = Column(DateTime, default=datetime.utcnow)
 
 
+class AlertSubscription(Base):
+    """
+    A subscription to a specific alert condition for one ticker.
+
+    Channels
+    ────────
+    At least one of `email` or `slack_webhook` must be set.
+    If `slack_webhook` is NULL the global settings.alert_slack_webhook is used
+    (when configured), so a row with only `email` still gets Slack delivery if
+    the operator has a global webhook.
+
+    Conditions
+    ──────────
+    See backend/services/alerts.VALID_CONDITIONS for the allowed values.
+    `threshold` interpretation depends on the condition:
+      risk_score_above   — numeric, e.g. 70.0
+      quality_score_below — numeric, e.g. 40.0
+      ml_prob_above      — decimal fraction, e.g. 0.60
+      distress_zone      — threshold unused (NULL)
+    """
+    __tablename__ = "alert_subscriptions"
+
+    id           = Column(Integer, primary_key=True, autoincrement=True)
+    ticker       = Column(String, index=True, nullable=False)
+    condition    = Column(String, nullable=False)   # one of VALID_CONDITIONS
+    threshold    = Column(Float)                    # trigger level (NULL ok)
+    email        = Column(String)                   # recipient email address
+    slack_webhook = Column(String)                  # per-sub Slack webhook URL
+    active       = Column(Boolean, default=True, nullable=False)
+    created_at   = Column(DateTime, default=datetime.utcnow)
+    updated_at   = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("ticker", "condition", "email",
+                         name="uq_alert_ticker_condition_email"),
+    )
+
+
 def get_db():
     db = SessionLocal()
     try:
