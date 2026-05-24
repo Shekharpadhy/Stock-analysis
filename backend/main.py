@@ -17,6 +17,7 @@ from backend.api.routes import router
 from backend.api.ws import router as ws_router
 from backend.limiter import limiter
 from backend.services.price_stream import price_broadcast_loop
+from backend.services.ml_model import load_model_from_disk
 
 log = logging.getLogger(__name__)
 
@@ -26,7 +27,10 @@ async def lifespan(_app: FastAPI):
     # 1. Bring the schema up to date (Alembic) before serving traffic.
     init_db()
 
-    # 2. Start the background price-broadcast loop.
+    # 2. Load persisted ML model (non-fatal if not present yet).
+    load_model_from_disk()
+
+    # 3. Start the background price-broadcast loop.
     broadcast_task = asyncio.create_task(price_broadcast_loop())
     log.info("price_stream: broadcast loop started")
 

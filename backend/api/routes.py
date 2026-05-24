@@ -34,6 +34,7 @@ from backend.services.calibration import (
 )
 from backend.services.governance import compute_governance_score
 from backend.services.bcsi import compute_bcsi
+from backend.services import ml_model
 
 router = APIRouter()
 log = logging.getLogger(__name__)
@@ -602,6 +603,42 @@ def delete_company(
     db.delete(rec)
     db.commit()
     return {"message": f"{t} removed from database."}
+
+
+# ── ML default-prediction ────────────────────────────────────────────────────
+@router.get("/ml/status")
+def ml_status():
+    """Current ML model status: loaded, training metadata, feature importance."""
+    return ml_model.get_model_status()
+
+
+@router.post("/ml/train")
+def ml_train(
+    db: Session = Depends(get_db),
+    _user: str = Depends(require_auth),
+):
+    """
+    (Re)train the XGBoost distress-prediction model from accumulated DB data.
+    Admin-only.  Returns training metadata including cross-validated AUC.
+    """
+    try:
+        meta = ml_model.train(db)
+        return {"status": "ok", "meta": meta}
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+@router.get("/ml/predict/{ticker}")
+def ml_predict(ticker: str, db: Session = Depends(get_db)):
+    """
+    Distress probability + SHAP explanation for a tracked ticker.
+    Returns top-5 drivers ranked by absolute SHAP contribution.
+    """
+    t = _validate_ticker(ticker)
+    try:
+        return ml_model.predict(t, db)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 
 # ── Serialiser ────────────────────────────────────────────────────────────────
