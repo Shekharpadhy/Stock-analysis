@@ -234,10 +234,11 @@ def test_compute_momentum_uptrend_with_strong_buy(db_session):
     assert out["momentum_score"] is not None
     assert out["momentum_score"] > 70             # all signals aligned bullish
     assert out["momentum_label"] in ("Strong", "Positive")
-    # All four components present (constant-volume series → ratio 1.0 → score 50)
-    assert out["confidence"] == 100
+    # 4 of 5 components present (no news_score passed to this synthetic call)
+    assert out["confidence"] == 80
     assert out["components"]["analyst_strength"] == 90.0
     assert out["components"]["volume_trend"] == 50.0   # flat volume = neutral
+    assert out["components"]["news_sentiment"] is None
     assert out["raw"]["ret_12m"] > 25
 
 

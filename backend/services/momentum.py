@@ -16,13 +16,15 @@ Components (all normalised to 0-100, higher = stronger momentum)
   position_52w     where current price sits in the 52-week range
   volume_trend     20-day avg volume / 180-day avg volume
   analyst_strength sell-side recommendation strength
+  news_sentiment   lexicon-scored recent headlines (v0.5.0)
 
 Component weights (within momentum)
 ───────────────────────────────────
-  price returns (averaged when ≥2 horizons present)  40%
-  52-week position                                   20%
-  volume trend                                       15%
-  analyst strength                                   25%
+  price returns (averaged when ≥2 horizons present)  35%
+  52-week position                                   17%
+  volume trend                                       13%
+  analyst strength                                   20%
+  news sentiment                                     15%
                                                     ────
                                                     100%
 
@@ -65,10 +67,11 @@ log = logging.getLogger(__name__)
 # sentiment (analysts) and tape signals (volume) still meaningfully shift the
 # score.
 _COMPONENT_WEIGHTS: Dict[str, float] = {
-    "price_returns":    0.40,   # averaged across 3M/6M/12M when available
-    "position_52w":     0.20,
-    "volume_trend":     0.15,
-    "analyst_strength": 0.25,
+    "price_returns":    0.35,   # averaged across 3M/6M/12M when available
+    "position_52w":     0.17,
+    "volume_trend":     0.13,
+    "analyst_strength": 0.20,
+    "news_sentiment":   0.15,
 }
 
 # Sigmoid temperature for return-to-score mapping.  At ±30% return the score
@@ -297,6 +300,8 @@ def compute_momentum(
     db: Session,
     recommendation: Optional[str] = None,
     as_of: Optional[dt.date] = None,
+    news_score: Optional[float] = None,
+    news_meta: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Compute the momentum score for `ticker`.
@@ -352,6 +357,7 @@ def compute_momentum(
         "position_52w":     price.position_52w_score,
         "volume_trend":     price.volume_trend_score,
         "analyst_strength": analyst_score,
+        "news_sentiment":   news_score,
     }
 
     # 5. Weighted sum, renormalised over whatever components have data.
@@ -375,6 +381,10 @@ def compute_momentum(
         "momentum_score":  score,
         "momentum_label":  _label(score),
         "components":      components,
-        "raw":             {**price.raw, "recommendation": recommendation},
+        "raw": {
+            **price.raw,
+            "recommendation": recommendation,
+            "news":           news_meta,
+        },
         "confidence":      round(len(present) / len(_COMPONENT_WEIGHTS) * 100),
     }

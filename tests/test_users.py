@@ -97,6 +97,54 @@ def test_hash_is_not_plaintext():
     assert "mysecret" not in h
 
 
+def test_new_hashes_use_argon2id():
+    """v0.5.0+ defaults to argon2id — every fresh hash carries that marker."""
+    h = hash_password("anything")
+    assert h.startswith("$argon2"), h
+
+
+def test_legacy_sha256_crypt_hash_still_verifies():
+    """Backward-compat: hashes from v0.2.x must still verify."""
+    from passlib.hash import sha256_crypt
+    legacy = sha256_crypt.hash("OldPassword1!")
+    assert legacy.startswith("$5$")           # sha256_crypt marker
+    assert verify_password("OldPassword1!", legacy) is True
+
+
+def test_legacy_login_rehashes_to_argon2(client, db_session):
+    """End-to-end: a user whose row has a sha256_crypt hash logs in,
+    server transparently upgrades the hash to argon2id, next login
+    succeeds against the new hash."""
+    from passlib.hash import sha256_crypt
+    from backend.database.db import User
+
+    # Seed a user with a legacy hash directly in the DB.
+    legacy_user = User(
+        username="legacy", email="legacy@example.com",
+        hashed_password=sha256_crypt.hash("LegacyPass1!"),
+        role="user", is_active=True,
+    )
+    db_session.add(legacy_user)
+    db_session.commit()
+
+    # First login: succeeds + triggers the rehash.
+    resp = client.post(f"{BASE}/auth/login",
+                       json={"username": "legacy", "email": "u@x",
+                             "password": "LegacyPass1!"})
+    assert resp.status_code == 200
+
+    # Inspect the stored hash — must now be argon2.
+    db_session.refresh(legacy_user)
+    assert legacy_user.hashed_password.startswith("$argon2"), \
+        legacy_user.hashed_password
+
+    # Second login still works against the new hash.
+    resp2 = client.post(f"{BASE}/auth/login",
+                        json={"username": "legacy", "email": "u@x",
+                              "password": "LegacyPass1!"})
+    assert resp2.status_code == 200
+
+
 # ── registration ──────────────────────────────────────────────────────────────
 
 def test_register_success(client):

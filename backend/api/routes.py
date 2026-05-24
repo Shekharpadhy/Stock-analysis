@@ -16,7 +16,7 @@ from backend.limiter import limiter
 from backend.auth import (
     authenticate_admin, create_access_token, require_auth,
     require_user_auth, require_admin_auth,
-    hash_password, verify_password,
+    hash_password, verify_password, verify_and_update,
 )
 from backend.database.db import (
     get_db, CompanyRecord, SectorProfile, GovernanceRecord,
@@ -42,6 +42,7 @@ from backend.services.bcsi import compute_bcsi
 from backend.services import ml_model
 from backend.services import alerts as alert_svc
 from backend.services.momentum import compute_momentum
+from backend.services.news_sentiment import compute_news_score
 from backend.services.price_history import fetch_and_store_prices
 from backend.services import jobs as job_svc
 from backend.services.scheduler import get_job_status
@@ -163,9 +164,20 @@ async def analyze_company(request: Request, ticker: str, db: Session = Depends(g
         await asyncio.to_thread(fetch_and_store_prices, db, t, 2)   # 2y window
     except Exception as exc:
         log.warning("analyse(%s): price history refresh failed — %s", t, exc)
+    # News sentiment is best-effort and network-touching — run it in a
+    # thread so the analyse coroutine isn't blocked, and isolate failures.
+    news_meta = None
+    try:
+        news_meta = await asyncio.to_thread(compute_news_score, t, 14)
+    except Exception as exc:                          # noqa: BLE001
+        log.warning("analyse(%s): news fetch/score failed — %s", t, exc)
+
     try:
         momentum = compute_momentum(
-            t, db, recommendation=raw.get("recommendation"),
+            t, db,
+            recommendation = raw.get("recommendation"),
+            news_score     = (news_meta or {}).get("score"),
+            news_meta      = news_meta,
         )
     except Exception as exc:
         log.warning("analyse(%s): momentum computation failed — %s", t, exc)
@@ -1007,8 +1019,19 @@ def login_user(body: UserRegistration, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.username == body.username).first()
     if not user or not user.is_active:
         raise HTTPException(status_code=401, detail="Invalid credentials.")
-    if not verify_password(body.password, user.hashed_password):
+
+    matched, new_hash = verify_and_update(body.password, user.hashed_password)
+    if not matched:
         raise HTTPException(status_code=401, detail="Invalid credentials.")
+
+    # Transparent upgrade: if the stored hash is in a deprecated scheme
+    # (e.g., the legacy sha256_crypt from v0.2.x), passlib hands us a fresh
+    # argon2id hash to persist.  The user notices nothing.
+    if new_hash is not None:
+        user.hashed_password = new_hash
+        db.commit()
+        log.info("auth: rehashed legacy password for user %s", user.username)
+
     token = create_access_token(subject=user.username, role=user.role)
     return {"access_token": token, "token_type": "bearer"}
 

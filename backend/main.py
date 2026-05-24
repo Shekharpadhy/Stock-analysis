@@ -12,6 +12,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
 from backend.config import settings
+from backend.logging_config import configure_logging
 from backend.database.db import init_db
 from backend.api.routes import router
 from backend.api.ws import router as ws_router
@@ -19,6 +20,10 @@ from backend.limiter import limiter
 from backend.services.price_stream import price_broadcast_loop
 from backend.services.ml_model import load_model_from_disk
 from backend.services.scheduler import start_scheduler, shutdown_scheduler
+
+# Install the formatter before anyone else logs (modules imported above
+# may have already grabbed the root logger; configure_logging() resets it).
+configure_logging(level=settings.log_level, fmt=settings.log_format)
 
 log = logging.getLogger(__name__)
 

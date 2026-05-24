@@ -44,17 +44,43 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/token")
 
 # ── password hashing ──────────────────────────────────────────────────────────
 
-# sha256_crypt has no external C-library dependency and works reliably on all
-# Python 3.9+ platforms.  Swap to bcrypt in production if desired.
-_pwd_ctx = CryptContext(schemes=["sha256_crypt"], deprecated="auto")
+# Password hashing scheme order matters:
+#   • argon2 — DEFAULT for new hashes.  OWASP-recommended; memory-hard, GPU-
+#     resistant; uses the argon2-cffi backend.
+#   • sha256_crypt — kept for verification of legacy v0.2.x hashes only.
+#     Marked deprecated so passlib flags any sha256_crypt hash as needing
+#     rehash; verify_password() then transparently upgrades it on next login.
+_pwd_ctx = CryptContext(
+    schemes=["argon2", "sha256_crypt"],
+    default="argon2",
+    deprecated=["sha256_crypt"],
+)
 
 
 def hash_password(plain: str) -> str:
+    """Hash a password with the current default scheme (argon2id)."""
     return _pwd_ctx.hash(plain)
 
 
 def verify_password(plain: str, hashed: str) -> bool:
+    """Verify against any supported scheme.  Returns True on a match."""
     return _pwd_ctx.verify(plain, hashed)
+
+
+def verify_and_update(plain: str, hashed: str) -> tuple[bool, Optional[str]]:
+    """
+    Verify a password and, if the stored hash is in a deprecated scheme,
+    return a fresh argon2id hash so the caller can persist the upgrade.
+
+    Returns
+    -------
+        (matched, new_hash_or_None)
+            matched          True if the password verified.
+            new_hash_or_None Non-None when the stored hash needs replacement;
+                             the caller should write it back to the user row.
+    """
+    matched, new_hash = _pwd_ctx.verify_and_update(plain, hashed)
+    return matched, new_hash
 
 
 # ── admin credential check (legacy) ──────────────────────────────────────────

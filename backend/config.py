@@ -58,6 +58,11 @@ class Settings(BaseSettings):
     # Background scheduler — set to false in tests / one-shot CLI runs
     scheduler_enabled: bool = True
 
+    # ── Logging ──────────────────────────────────────────────────────────────
+    # `text` for dev, `json` for prod log-shippers (Datadog, Loki, ES, ...)
+    log_format: str = "text"
+    log_level:  str = "INFO"
+
     # ── Validation hooks ──────────────────────────────────────────────────────
 
     def is_production(self) -> bool:
