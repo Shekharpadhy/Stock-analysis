@@ -7,6 +7,7 @@ def _ensemble(score):   return {"composite_score": score}
 def _valuation(upside): return {"upside_pct": upside}
 def _quality(score):    return {"quality_score": score}
 def _governance(score): return {"governance_score": score}
+def _momentum(score):   return {"momentum_score": score}
 
 
 # ── Composition ───────────────────────────────────────────────────────────────
@@ -49,12 +50,33 @@ def test_governance_optional_and_weights_renormalise():
         assert abs(total - 1.0) < 0.01
 
 
-def test_momentum_always_pending():
+def test_momentum_absent_when_not_provided():
     r = compute_bcsi(_ensemble(30), _valuation(10), _quality(70), _governance(20))
     assert "momentum" not in r["dimensions"]
-    assert "pending" in r["momentum_status"]
-    # 4 of 5 dimensions present → 80% coverage ceiling
+    # 4 of 5 dimensions present → 80% coverage
     assert r["confidence"] == 80
+
+
+def test_momentum_included_when_provided():
+    r = compute_bcsi(
+        _ensemble(30), _valuation(10), _quality(70), _governance(20),
+        momentum=_momentum(75),
+    )
+    assert "momentum" in r["dimensions"]
+    assert r["dimensions"]["momentum"]["score"] == 75
+    # All 5 dimensions present → full coverage
+    assert r["confidence"] == 100
+    # Weights still sum to 1
+    total = sum(d["weight"] for d in r["dimensions"].values())
+    assert abs(total - 1.0) < 0.01
+
+
+def test_strong_momentum_raises_score():
+    weak_mom   = compute_bcsi(_ensemble(30), _valuation(10), _quality(70),
+                              _governance(20), momentum=_momentum(15))
+    strong_mom = compute_bcsi(_ensemble(30), _valuation(10), _quality(70),
+                              _governance(20), momentum=_momentum(90))
+    assert strong_mom["bcsi_score"] > weak_mom["bcsi_score"]
 
 
 def test_confidence_drops_without_governance():

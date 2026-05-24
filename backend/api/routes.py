@@ -41,6 +41,11 @@ from backend.services.governance import compute_governance_score
 from backend.services.bcsi import compute_bcsi
 from backend.services import ml_model
 from backend.services import alerts as alert_svc
+from backend.services.momentum import compute_momentum
+from backend.services.price_history import fetch_and_store_prices
+from backend.services import jobs as job_svc
+from backend.services.scheduler import get_job_status
+from backend.services import portfolio as portfolio_svc
 
 router = APIRouter()
 log = logging.getLogger(__name__)
@@ -144,7 +149,25 @@ async def analyze_company(request: Request, ticker: str, db: Session = Depends(g
         if gov_rec and gov_rec.governance_score is not None
         else None
     )
-    bcsi = compute_bcsi(ensemble, valuation, quality, governance_for_bcsi)
+
+    # Momentum — best-effort: refresh price history (network) then score.  A
+    # failure here MUST NOT block analysis; momentum just goes absent from BCSI
+    # and the dimension renormalises around the remaining four.
+    try:
+        await asyncio.to_thread(fetch_and_store_prices, db, t, 2)   # 2y window
+    except Exception as exc:
+        log.warning("analyse(%s): price history refresh failed — %s", t, exc)
+    try:
+        momentum = compute_momentum(
+            t, db, recommendation=raw.get("recommendation"),
+        )
+    except Exception as exc:
+        log.warning("analyse(%s): momentum computation failed — %s", t, exc)
+        momentum = None
+
+    bcsi = compute_bcsi(
+        ensemble, valuation, quality, governance_for_bcsi, momentum=momentum,
+    )
 
     # Flatten all results into a single dict for DB upsert
     record_data = {
@@ -190,6 +213,11 @@ async def analyze_company(request: Request, ticker: str, db: Session = Depends(g
         "quality_label":     quality.get("quality_label"),
         "piotroski_f_score": quality.get("piotroski", {}).get("f_score"),
         "graham_number":     quality.get("graham_number"),
+        # Momentum
+        "momentum_score":      momentum["momentum_score"]    if momentum else None,
+        "momentum_label":      momentum["momentum_label"]    if momentum else None,
+        "momentum_components": json.dumps(momentum["components"]) if momentum else None,
+        "momentum_raw":        json.dumps(momentum["raw"])        if momentum else None,
         # BCSI composite
         "bcsi_score":      bcsi["bcsi_score"],
         "bcsi_label":      bcsi["bcsi_label"],
@@ -349,7 +377,12 @@ def get_bcsi(ticker: str, db: Session = Depends(get_db)):
             "piotroski_f_score": rec.piotroski_f_score,
             "graham_number":     rec.graham_number,
         },
-        "momentum_status": "pending — Phase 7 (sentiment + technicals + signals)",
+        "momentum": {
+            "momentum_score":  rec.momentum_score,
+            "momentum_label":  rec.momentum_label,
+            "components":      json.loads(rec.momentum_components) if rec.momentum_components else {},
+            "raw":             json.loads(rec.momentum_raw)        if rec.momentum_raw        else {},
+        },
         "last_updated":   rec.last_updated.isoformat() if rec.last_updated else None,
     }
 
@@ -712,6 +745,9 @@ def _serialize(rec: CompanyRecord) -> dict:
         "quality_label":     rec.quality_label,
         "piotroski_f_score": rec.piotroski_f_score,
         "graham_number":     rec.graham_number,
+        # Momentum
+        "momentum_score":    rec.momentum_score,
+        "momentum_label":    rec.momentum_label,
         # BCSI composite
         "bcsi_score":      rec.bcsi_score,
         "bcsi_label":      rec.bcsi_label,
@@ -986,7 +1022,11 @@ def add_to_watchlist(
     token_payload: dict    = Depends(require_user_auth),
     db:            Session = Depends(get_db),
 ):
-    """Add a ticker to the current user's watchlist."""
+    """
+    Add a ticker to the current user's watchlist.  Also creates the default
+    alert subscriptions (risk_score_above 75, distress_zone) if the user has
+    an email on file — opting them in to obvious red-flag signals.
+    """
     username = token_payload["sub"]
     user = db.query(User).filter(User.username == username).first()
     if not user:
@@ -1004,6 +1044,33 @@ def add_to_watchlist(
 
     entry = WatchlistEntry(user_id=user.id, ticker=ticker, notes=body.notes)
     db.add(entry)
+
+    # Auto-create default alert subscriptions.  Guarded by an "already exists"
+    # check so this is safe even if the user later re-adds the same ticker
+    # after deleting it.
+    if user.email:
+        for tmpl in alert_svc.WATCHLIST_DEFAULT_ALERTS:
+            already = (
+                db.query(AlertSubscription)
+                .filter(
+                    AlertSubscription.user_id   == user.id,
+                    AlertSubscription.ticker    == ticker,
+                    AlertSubscription.condition == tmpl["condition"],
+                    AlertSubscription.email     == user.email,
+                )
+                .first()
+            )
+            if already:
+                continue
+            db.add(AlertSubscription(
+                user_id   = user.id,
+                ticker    = ticker,
+                condition = tmpl["condition"],
+                threshold = tmpl["threshold"],
+                email     = user.email,
+                active    = True,
+            ))
+
     db.commit()
     db.refresh(entry)
     return WatchlistEntryOut(
@@ -1033,6 +1100,125 @@ def remove_from_watchlist(
     if not entry:
         raise HTTPException(status_code=404, detail=f"{t} not found in watchlist.")
     db.delete(entry)
+
+    # Deactivate any auto-created alerts for the same ticker.  Soft-delete
+    # so a user re-adding the ticker doesn't double-stamp last_fired_at.
+    (
+        db.query(AlertSubscription)
+        .filter(
+            AlertSubscription.user_id == user.id,
+            AlertSubscription.ticker  == t,
+        )
+        .update({"active": False}, synchronize_session=False)
+    )
+    db.commit()
+
+
+# ── Per-user alert endpoints ──────────────────────────────────────────────────
+
+@router.get("/users/me/alerts")
+def list_my_alerts(
+    token_payload: dict    = Depends(require_user_auth),
+    db:            Session = Depends(get_db),
+):
+    """Return all active alert subscriptions owned by the current user."""
+    username = token_payload["sub"]
+    user = db.query(User).filter(User.username == username).first()
+    if not user:
+        return []
+
+    subs = (
+        db.query(AlertSubscription)
+        .filter(
+            AlertSubscription.user_id == user.id,
+            AlertSubscription.active.is_(True),
+        )
+        .order_by(AlertSubscription.id)
+        .all()
+    )
+    return [
+        AlertSubscriptionOut(
+            id=s.id, ticker=s.ticker, condition=s.condition,
+            threshold=s.threshold, email=s.email,
+            slack_webhook=s.slack_webhook, active=s.active,
+        )
+        for s in subs
+    ]
+
+
+@router.post("/users/me/alerts", status_code=201, response_model=AlertSubscriptionOut)
+def create_my_alert(
+    body:          AlertSubscriptionIn,
+    token_payload: dict    = Depends(require_user_auth),
+    db:            Session = Depends(get_db),
+):
+    """Create an alert subscription owned by the current user."""
+    if body.condition not in alert_svc.VALID_CONDITIONS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unknown condition {body.condition!r}. "
+                   f"Valid: {sorted(alert_svc.VALID_CONDITIONS)}",
+        )
+
+    username = token_payload["sub"]
+    user = db.query(User).filter(User.username == username).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found.")
+
+    # Default to the account email when the caller doesn't override.
+    email = body.email or user.email
+    if not email and not body.slack_webhook:
+        raise HTTPException(
+            status_code=422,
+            detail="No delivery channel — provide email or slack_webhook.",
+        )
+
+    ticker = _validate_ticker(body.ticker)
+    sub = AlertSubscription(
+        user_id       = user.id,
+        ticker        = ticker,
+        condition     = body.condition,
+        threshold     = body.threshold,
+        email         = email,
+        slack_webhook = body.slack_webhook,
+        active        = True,
+    )
+    db.add(sub)
+    try:
+        db.commit()
+        db.refresh(sub)
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=f"Subscription already exists: {exc}")
+
+    return AlertSubscriptionOut(
+        id=sub.id, ticker=sub.ticker, condition=sub.condition,
+        threshold=sub.threshold, email=sub.email,
+        slack_webhook=sub.slack_webhook, active=sub.active,
+    )
+
+
+@router.delete("/users/me/alerts/{sub_id}", status_code=204)
+def delete_my_alert(
+    sub_id:        int,
+    token_payload: dict    = Depends(require_user_auth),
+    db:            Session = Depends(get_db),
+):
+    """Deactivate an alert owned by the current user."""
+    username = token_payload["sub"]
+    user = db.query(User).filter(User.username == username).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found.")
+
+    sub = (
+        db.query(AlertSubscription)
+        .filter(AlertSubscription.id == sub_id,
+                AlertSubscription.user_id == user.id)
+        .first()
+    )
+    if not sub:
+        raise HTTPException(status_code=404, detail=f"Subscription {sub_id} not found.")
+    sub.active = False
     db.commit()
 
 
@@ -1051,3 +1237,82 @@ def list_users(
         )
         for u in users
     ]
+
+
+# ── Background scheduler endpoints ────────────────────────────────────────────
+
+@router.get("/scheduler/status")
+def scheduler_status(_: dict = Depends(require_admin_auth)):
+    """Return the current scheduler state — running flag + per-job next-run."""
+    return get_job_status()
+
+
+@router.post("/scheduler/run/{job_name}")
+def scheduler_run_job(
+    job_name: str,
+    _: dict = Depends(require_admin_auth),
+):
+    """
+    Manually trigger a job by name (admin only).
+
+    Useful for one-off backfills and for verifying jobs end-to-end in
+    staging without waiting for the next scheduled run.
+    """
+    job_map = {
+        "evaluate_active_alerts":    job_svc.evaluate_active_alerts,
+        "score_matured_predictions": job_svc.score_matured_predictions,
+        "retrain_ml_model":          job_svc.retrain_ml_model,
+        "recalibrate_sectors":       job_svc.recalibrate_sectors,
+    }
+    fn = job_map.get(job_name)
+    if fn is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Unknown job {job_name!r}. Available: {sorted(job_map)}",
+        )
+    return fn()
+
+
+# ── Portfolio analytics ───────────────────────────────────────────────────────
+
+@router.get("/users/me/portfolio")
+def get_my_portfolio(
+    token_payload: dict    = Depends(require_user_auth),
+    db:            Session = Depends(get_db),
+):
+    """
+    Aggregate the current user's watchlist into a portfolio-level view:
+    BCSI distribution, risk + momentum averages, sector exposure, top and
+    bottom holdings.  Tickers without a CompanyRecord yet are surfaced in
+    a separate `missing_data` list so the UI can prompt an /analyze.
+    """
+    username = token_payload["sub"]
+    user = db.query(User).filter(User.username == username).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found.")
+
+    # Pull the watchlist tickers — a single SELECT.
+    tickers: list[str] = [
+        t for (t,) in db.query(WatchlistEntry.ticker)
+                        .filter(WatchlistEntry.user_id == user.id)
+                        .all()
+    ]
+    if not tickers:
+        return {
+            "coverage":     0,
+            "missing_data": [],
+            **portfolio_svc.summarise([]),
+        }
+
+    # One indexed lookup against companies — no N+1.
+    recs = (
+        db.query(CompanyRecord)
+        .filter(CompanyRecord.ticker.in_(tickers))
+        .all()
+    )
+    found = {r.ticker for r in recs}
+    missing = sorted(set(tickers) - found)
+
+    summary = portfolio_svc.summarise(recs)
+    summary["missing_data"] = missing
+    return summary

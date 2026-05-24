@@ -18,6 +18,7 @@ from backend.api.ws import router as ws_router
 from backend.limiter import limiter
 from backend.services.price_stream import price_broadcast_loop
 from backend.services.ml_model import load_model_from_disk
+from backend.services.scheduler import start_scheduler, shutdown_scheduler
 
 log = logging.getLogger(__name__)
 
@@ -34,9 +35,14 @@ async def lifespan(_app: FastAPI):
     broadcast_task = asyncio.create_task(price_broadcast_loop())
     log.info("price_stream: broadcast loop started")
 
+    # 4. Start the APScheduler-driven periodic jobs (alerts, retraining…).
+    start_scheduler()
+
     yield
 
-    # 3. Graceful shutdown — cancel the broadcast task.
+    # 5. Graceful shutdown — stop scheduler then cancel the broadcast task.
+    shutdown_scheduler()
+
     broadcast_task.cancel()
     try:
         await broadcast_task

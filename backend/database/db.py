@@ -120,10 +120,16 @@ class CompanyRecord(Base):
     piotroski_f_score = Column(Integer)
     graham_number     = Column(Float)
 
+    # ── Momentum dimension (price action + analyst tone) ──────────
+    momentum_score      = Column(Float)
+    momentum_label      = Column(String)
+    momentum_components = Column(Text)   # JSON: per-signal 0-100 scores
+    momentum_raw        = Column(Text)   # JSON: raw returns/volume/52w values
+
     # ── BCSI composite (the headline number) ──────────────────────
     bcsi_score      = Column(Float)
     bcsi_label      = Column(String)
-    bcsi_dimensions = Column(Text)     # JSON: {risk,quality,valuation,governance}
+    bcsi_dimensions = Column(Text)     # JSON: {risk,quality,valuation,momentum,governance}
     bcsi_confidence = Column(Float)
 
     # ── Metadata ──────────────────────────────────────────────────
@@ -274,18 +280,23 @@ class AlertSubscription(Base):
     __tablename__ = "alert_subscriptions"
 
     id           = Column(Integer, primary_key=True, autoincrement=True)
+    user_id      = Column(Integer, index=True)      # NULL = legacy admin-owned global sub
     ticker       = Column(String, index=True, nullable=False)
     condition    = Column(String, nullable=False)   # one of VALID_CONDITIONS
     threshold    = Column(Float)                    # trigger level (NULL ok)
     email        = Column(String)                   # recipient email address
     slack_webhook = Column(String)                  # per-sub Slack webhook URL
-    active       = Column(Boolean, default=True, nullable=False)
-    created_at   = Column(DateTime, default=datetime.utcnow)
-    updated_at   = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    active        = Column(Boolean, default=True, nullable=False)
+    last_fired_at = Column(DateTime)              # last successful dispatch (cooldown anchor)
+    created_at    = Column(DateTime, default=datetime.utcnow)
+    updated_at    = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     __table_args__ = (
-        UniqueConstraint("ticker", "condition", "email",
-                         name="uq_alert_ticker_condition_email"),
+        # user_id is part of the key so two users can both watch the same
+        # (ticker, condition) without collision.  NULL user_id is the legacy
+        # admin-owned shape — kept addressable.
+        UniqueConstraint("user_id", "ticker", "condition", "email",
+                         name="uq_alert_user_ticker_condition_email"),
     )
 
 

@@ -52,6 +52,15 @@ VALID_CONDITIONS = {
     "quality_score_below",
 }
 
+
+# Default alert template auto-created when a ticker is added to a watchlist.
+# Deliberately conservative — fires only on outright distress and high risk
+# scores so it never spams.  Users can add finer-grained subs themselves.
+WATCHLIST_DEFAULT_ALERTS = [
+    {"condition": "risk_score_above", "threshold": 75.0},
+    {"condition": "distress_zone",    "threshold": None},
+]
+
 # ── payload builder ───────────────────────────────────────────────────────────
 
 def _build_alert_payload(
@@ -242,6 +251,45 @@ def _evaluate_condition(
 
 
 # ── public trigger API ────────────────────────────────────────────────────────
+
+def _evaluate_absolute(
+    condition: str,
+    threshold: Optional[float],
+    rec,
+    ml_prob: Optional[float] = None,
+) -> tuple:
+    """
+    Return (currently_holds: bool, current_value).
+
+    Unlike _evaluate_condition (which is edge-triggered on transitions), this
+    answers "is the condition true RIGHT NOW?" — used by the scheduler to
+    fire alerts on persistent conditions, gated by per-subscription cooldown.
+    """
+    def _val(attr):
+        return getattr(rec, attr, None)
+
+    if condition == "risk_score_above":
+        thr = threshold if threshold is not None else settings.alert_risk_threshold
+        v   = _val("risk_score")
+        return (v is not None and v > thr), (round(v, 1) if v is not None else None)
+
+    if condition == "distress_zone":
+        zone = _val("altman_zone")
+        return (zone == "Distress"), zone
+
+    if condition == "ml_prob_above":
+        thr = threshold if threshold is not None else 0.60
+        if ml_prob is None:
+            return False, None
+        return (ml_prob > thr), round(ml_prob, 4)
+
+    if condition == "quality_score_below":
+        thr = threshold if threshold is not None else 40.0
+        v   = _val("quality_score")
+        return (v is not None and v < thr), (round(v, 1) if v is not None else None)
+
+    return False, None
+
 
 def check_and_fire(
     ticker: str,

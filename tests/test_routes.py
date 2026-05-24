@@ -128,10 +128,14 @@ def test_bcsi_empty_dimensions_when_null(client, db_session):
     assert data["dimensions"] == {}
 
 
-def test_bcsi_momentum_always_pending(client, db_session):
+def test_bcsi_response_includes_momentum_block(client, db_session):
     _make_company(db_session)
     data = client.get(f"{BASE}/companies/AAPL/bcsi").json()
-    assert "pending" in data["momentum_status"]
+    assert "momentum" in data
+    # Score may be None when no price history has been seeded, but the
+    # nested block must always be present.
+    assert "momentum_score" in data["momentum"]
+    assert "components"     in data["momentum"]
 
 
 # ── GET /companies/{ticker} includes BCSI in payload ─────────────────────────

@@ -43,5 +43,8 @@ class Settings(BaseSettings):
     # Risk-score threshold above which an alert fires (0–100)
     alert_risk_threshold: float = 70.0
 
+    # Background scheduler — set to false in tests / one-shot CLI runs
+    scheduler_enabled: bool = True
+
 
 settings = Settings()
