@@ -342,6 +342,29 @@ class WatchlistEntry(Base):
     )
 
 
+class AuditLog(Base):
+    """
+    Append-only record of privileged actions.
+
+    Why this exists
+    ───────────────
+    For production accountability: who triggered a model retrain, who deleted
+    a user, when was an alert dispatched.  Distinct from application logging
+    because it is structured, queryable, and survives log rotation.
+
+    Schema is deliberately loose — the `extra` JSON column accepts arbitrary
+    per-action context (target ticker, n_samples retrained, error reason).
+    """
+    __tablename__ = "audit_log"
+
+    id        = Column(Integer, primary_key=True, autoincrement=True)
+    actor     = Column(String, nullable=False, index=True)   # "admin" | username
+    action    = Column(String, nullable=False, index=True)   # short verb
+    target    = Column(String, index=True)                   # ticker | user_id | job_name
+    extra     = Column(Text)                                 # JSON blob
+    timestamp = Column(DateTime, default=datetime.utcnow, index=True)
+
+
 def get_db():
     db = SessionLocal()
     try:

@@ -25,6 +25,10 @@ log = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    # 0. Refuse to start in production with insecure defaults — this is a
+    #    safety gate that runs BEFORE any DB / external connection.
+    settings.validate_for_production()
+
     # 1. Bring the schema up to date (Alembic) before serving traffic.
     init_db()
 

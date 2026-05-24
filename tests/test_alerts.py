@@ -286,6 +286,30 @@ def test_check_and_fire_fires_on_transition():
     md.assert_called_once()
 
 
+def test_check_and_fire_accepts_simplenamespace_snapshot():
+    """
+    The analyse pipeline passes a SimpleNamespace snapshot (not a real
+    ORM object) as `old_rec`.  Verify that path works end-to-end.
+    """
+    from types import SimpleNamespace
+    old = SimpleNamespace(risk_score=60.0, altman_zone="Safe", quality_score=70.0)
+    new = _make_rec(risk_score=80.0, altman_zone="Distress")
+
+    sub_risk    = _make_sub(condition="risk_score_above", threshold=70.0)
+    sub_zone    = _make_sub(condition="distress_zone",   threshold=None)
+    sub_zone.id = 2
+
+    db = MagicMock()
+    db.query.return_value.filter.return_value.all.return_value = [sub_risk, sub_zone]
+
+    with patch.object(alert_svc, "dispatch", return_value={"email": True}) as md:
+        fired = alert_svc.check_and_fire("AAPL", old, new, db)
+
+    # Both conditions transitioned false→true.
+    assert len(fired) == 2
+    assert md.call_count == 2
+
+
 def test_check_and_fire_silent_when_not_triggered():
     old = _make_rec(risk_score=40.0)
     new = _make_rec(risk_score=50.0)

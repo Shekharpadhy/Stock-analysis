@@ -311,4 +311,8 @@ def _build_training_data(db) -> Tuple[pd.DataFrame, pd.Series]:
     log.info(
         "ml_model: using %d CompanyRecord rows (Altman-derived labels)", len(rows)
     )
+    # Build an empty-but-typed frame when there's no data so callers see
+    # `len(X) == 0` rather than a column-indexing KeyError.
+    if not rows:
+        return pd.DataFrame(columns=FEATURE_COLS), pd.Series([], dtype=int)
     return pd.DataFrame(rows)[FEATURE_COLS], pd.Series(labels, dtype=int)

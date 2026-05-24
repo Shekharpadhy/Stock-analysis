@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, text
 
 from backend.config import settings
 from backend.limiter import limiter
@@ -20,7 +20,7 @@ from backend.auth import (
 )
 from backend.database.db import (
     get_db, CompanyRecord, SectorProfile, GovernanceRecord,
-    AlertSubscription, User, WatchlistEntry,
+    AlertSubscription, User, WatchlistEntry, AuditLog,
 )
 from backend.services.ingestion import (
     fetch_company_data,
@@ -46,6 +46,8 @@ from backend.services.price_history import fetch_and_store_prices
 from backend.services import jobs as job_svc
 from backend.services.scheduler import get_job_status
 from backend.services import portfolio as portfolio_svc
+from backend.services import audit
+from backend.services.metrics import REGISTRY as METRICS
 
 router = APIRouter()
 log = logging.getLogger(__name__)
@@ -62,7 +64,10 @@ def _validate_ticker(ticker: str) -> str:
 
 # ── Authentication ────────────────────────────────────────────────────────────
 @router.post("/auth/token")
-def login(form_data: OAuth2PasswordRequestForm = Depends()):
+def login(
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    db:        Session = Depends(get_db),
+):
     """Exchange admin credentials (form-encoded) for a short-lived bearer JWT."""
     if not authenticate_admin(form_data.username, form_data.password):
         raise HTTPException(
@@ -70,6 +75,7 @@ def login(form_data: OAuth2PasswordRequestForm = Depends()):
             detail="Incorrect username or password.",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    audit.record(db, actor=form_data.username, action="auth.admin_login")
     return {
         "access_token": create_access_token(form_data.username),
         "token_type": "bearer",
@@ -226,6 +232,23 @@ async def analyze_company(request: Request, ticker: str, db: Session = Depends(g
     }
 
     rec = db.query(CompanyRecord).filter(CompanyRecord.ticker == t).first()
+
+    # Capture the pre-update snapshot for edge-triggered alert evaluation.
+    # SimpleNamespace gives check_and_fire() the attribute shape it expects
+    # without holding a SQLAlchemy reference that would mutate under us when
+    # we setattr() below.  We only snapshot the fields any condition reads.
+    from types import SimpleNamespace
+    if rec:
+        old_snapshot = SimpleNamespace(
+            risk_score    = rec.risk_score,
+            altman_zone   = rec.altman_zone,
+            quality_score = rec.quality_score,
+        )
+    else:
+        old_snapshot = SimpleNamespace(
+            risk_score=None, altman_zone=None, quality_score=None,
+        )
+
     if rec:
         for k, v in record_data.items():
             if hasattr(rec, k):
@@ -247,6 +270,21 @@ async def analyze_company(request: Request, ticker: str, db: Session = Depends(g
     except Exception as e:                       # noqa: BLE001
         log.warning("track-record: failed to record prediction for %s (%s)", t, e)
 
+    # Edge-triggered alerts — fire when this analysis flipped a condition
+    # from false→true (e.g., risk_score crossed above a subscription's
+    # threshold). Wrapped in try/except so a delivery failure can never break
+    # the analyse response itself.
+    try:
+        fired = alert_svc.check_and_fire(t, old_snapshot, rec, db)
+        for f in fired or []:
+            METRICS.inc("alerts_fired_total",
+                        labels={"condition": f["payload"]["condition"]})
+        if fired:
+            log.info("alerts: %d edge-triggered fires from analyse(%s)", len(fired), t)
+    except Exception as e:                       # noqa: BLE001
+        log.warning("alerts: edge-triggered evaluation failed for %s — %s", t, e)
+
+    METRICS.inc("analyses_total", labels={"sector": sector or "Unknown"})
     return _serialize(rec)
 
 
@@ -654,7 +692,7 @@ def ml_status():
 @router.post("/ml/train")
 def ml_train(
     db: Session = Depends(get_db),
-    _user: str = Depends(require_auth),
+    actor: str  = Depends(require_auth),
 ):
     """
     (Re)train the XGBoost distress-prediction model from accumulated DB data.
@@ -662,8 +700,15 @@ def ml_train(
     """
     try:
         meta = ml_model.train(db)
+        audit.record(db, actor=actor, action="ml.train",
+                     extra={"n_samples": meta.get("n_samples"),
+                            "cv_auc":    meta.get("cv_auc")})
+        METRICS.inc("ml_trainings_total", labels={"result": "success"})
         return {"status": "ok", "meta": meta}
     except ValueError as e:
+        audit.record(db, actor=actor, action="ml.train",
+                     extra={"failed": True, "reason": str(e)})
+        METRICS.inc("ml_trainings_total", labels={"result": "failure"})
         raise HTTPException(status_code=422, detail=str(e))
 
 
@@ -674,6 +719,7 @@ def ml_predict(ticker: str, db: Session = Depends(get_db)):
     Returns top-5 drivers ranked by absolute SHAP contribution.
     """
     t = _validate_ticker(ticker)
+    METRICS.inc("ml_predictions_total")
     try:
         return ml_model.predict(t, db)
     except ValueError as e:
@@ -943,6 +989,8 @@ def register_user(body: UserRegistration, db: Session = Depends(get_db)):
     db.add(user)
     db.commit()
     db.refresh(user)
+    audit.record(db, actor=user.username, action="user.register",
+                 target=str(user.id), extra={"email": user.email})
     return UserOut(
         id=user.id, username=user.username, email=user.email,
         role=user.role, is_active=user.is_active,
@@ -1250,7 +1298,8 @@ def scheduler_status(_: dict = Depends(require_admin_auth)):
 @router.post("/scheduler/run/{job_name}")
 def scheduler_run_job(
     job_name: str,
-    _: dict = Depends(require_admin_auth),
+    actor_payload: dict    = Depends(require_admin_auth),
+    db:            Session = Depends(get_db),
 ):
     """
     Manually trigger a job by name (admin only).
@@ -1270,6 +1319,9 @@ def scheduler_run_job(
             status_code=404,
             detail=f"Unknown job {job_name!r}. Available: {sorted(job_map)}",
         )
+    audit.record(db, actor=actor_payload.get("sub", "admin"),
+                 action="scheduler.run", target=job_name)
+    METRICS.inc("scheduler_runs_total", labels={"job": job_name})
     return fn()
 
 
@@ -1316,3 +1368,109 @@ def get_my_portfolio(
     summary = portfolio_svc.summarise(recs)
     summary["missing_data"] = missing
     return summary
+
+
+# ── Audit log (admin only) ────────────────────────────────────────────────────
+
+@router.get("/audit")
+def list_audit(
+    actor:   Optional[str] = None,
+    action:  Optional[str] = None,
+    limit:   int = 100,
+    _admin:  dict          = Depends(require_admin_auth),
+    db:      Session       = Depends(get_db),
+):
+    """
+    Return the most recent audit-log entries.  Supports actor/action filters.
+    Capped at 500 rows per request to keep the response tight.
+    """
+    limit = max(1, min(500, limit))
+    q = db.query(AuditLog)
+    if actor:
+        q = q.filter(AuditLog.actor == actor)
+    if action:
+        q = q.filter(AuditLog.action == action)
+    rows = q.order_by(AuditLog.timestamp.desc()).limit(limit).all()
+    return [
+        {
+            "id":        r.id,
+            "actor":     r.actor,
+            "action":    r.action,
+            "target":    r.target,
+            "extra":     json.loads(r.extra) if r.extra else None,
+            "timestamp": r.timestamp.isoformat() if r.timestamp else None,
+        }
+        for r in rows
+    ]
+
+
+# ── Health + metrics (observability) ──────────────────────────────────────────
+
+@router.get("/health")
+def health(db: Session = Depends(get_db)):
+    """
+    Deep health check.  Reports an overall `status`:
+        ok       — every dependency reachable
+        degraded — non-critical subsystem unavailable
+        down     — critical dependency (DB) unreachable
+
+    HTTP status is always 200 for `ok`/`degraded` so the load balancer can
+    distinguish "fine" from "DB melted" — a `down` response returns 503.
+    """
+    components: dict = {}
+
+    # DB ping — a trivial SELECT 1 verifies the connection works AND
+    # transactions complete.
+    try:
+        db.execute(text("SELECT 1"))
+        components["database"] = {"status": "ok"}
+    except Exception as exc:                      # noqa: BLE001
+        components["database"] = {"status": "down", "error": str(exc)}
+
+    # Scheduler — running or disabled both count as "ok" (disabled is
+    # legitimate in tests / one-shot CLI).
+    sched_state = get_job_status()
+    components["scheduler"] = {
+        "status": "ok" if sched_state["running"] else "disabled",
+        "jobs":   len(sched_state.get("jobs", [])),
+    }
+
+    # ML model — non-critical; presence is reported but absence ≠ unhealthy.
+    ml_status = ml_model.get_model_status()
+    components["ml_model"] = {
+        "status": "loaded" if ml_status["loaded"] else "not_loaded",
+    }
+
+    # Roll up.
+    if components["database"]["status"] != "ok":
+        overall, code = "down", 503
+    elif sched_state["running"] is False and settings.scheduler_enabled:
+        # Operator wanted it on but it isn't running → degraded.
+        overall, code = "degraded", 200
+    else:
+        overall, code = "ok", 200
+
+    from fastapi.responses import JSONResponse
+    return JSONResponse(
+        status_code=code,
+        content={"status": overall, "components": components,
+                 "env": settings.app_env, "version": "0.4.0"},
+    )
+
+
+@router.get("/metrics")
+def metrics():
+    """
+    Prometheus text-exposition format.  Scrape with:
+        scrape_configs:
+          - job_name: bcsi
+            metrics_path: /api/v1/metrics
+            static_configs: [{ targets: ['bcsi:8000'] }]
+
+    Endpoint is unauthenticated by design — Prometheus scrapers typically
+    can't carry bearer tokens.  Network-level ACLs (private subnet, etc.)
+    are the right place to gate access.
+    """
+    from fastapi.responses import Response
+    return Response(METRICS.render(),
+                    media_type="text/plain; version=0.0.4; charset=utf-8")

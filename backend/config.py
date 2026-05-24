@@ -1,4 +1,16 @@
+import logging
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+log = logging.getLogger(__name__)
+
+
+# Default values that MUST be overridden before deploying to production.
+# Centralised so validate_for_production() can list them in the error message.
+_INSECURE_DEFAULTS = {
+    "jwt_secret":     "dev-only-insecure-secret-change-me",
+    "admin_password": "change-me",
+}
 
 
 class Settings(BaseSettings):
@@ -45,6 +57,36 @@ class Settings(BaseSettings):
 
     # Background scheduler — set to false in tests / one-shot CLI runs
     scheduler_enabled: bool = True
+
+    # ── Validation hooks ──────────────────────────────────────────────────────
+
+    def is_production(self) -> bool:
+        return self.app_env.lower() in ("production", "prod")
+
+    def validate_for_production(self) -> None:
+        """
+        When APP_ENV=production, REFUSE to run with insecure defaults.
+
+        Called from main.py at app startup.  In non-production envs we only
+        log a warning so dev workflows aren't disrupted.
+        """
+        leaks = [
+            field for field, default in _INSECURE_DEFAULTS.items()
+            if getattr(self, field) == default
+        ]
+        if not leaks:
+            return
+
+        if self.is_production():
+            raise RuntimeError(
+                "Refusing to start in production with insecure defaults: "
+                f"{', '.join(leaks)}.  Set strong values via env vars before "
+                "deploying — see DEPLOYMENT.md."
+            )
+        log.warning(
+            "config: insecure defaults active (%s).  Safe for dev — but you "
+            "must override these before APP_ENV=production.", ", ".join(leaks),
+        )
 
 
 settings = Settings()

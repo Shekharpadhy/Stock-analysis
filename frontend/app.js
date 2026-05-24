@@ -268,10 +268,7 @@ function renderBcsiHero(c, bcsiData) {
             <div class="bcsi-dim-weight">${w}% weight</div>
           </div>`;
       })
-      .join("") +
-      `<div class="bcsi-momentum-note">
-         Momentum: <em>pending — Phase 7 (sentiment + technicals + signals)</em>
-       </div>`;
+      .join("");
   }
 }
 
@@ -543,9 +540,286 @@ function init() {
   initPriceStream();
 }
 
-// expose inline-referenced handlers
-window.analyzeCompany = analyzeCompany;
-window.filterCompanies = filterCompanies;
-window.toggleSection = toggleSection;
+/* ── Auth + user-scoped views (v0.3.0) ───────────────────────────────────── */
 
-document.addEventListener("DOMContentLoaded", init);
+const TOKEN_KEY = "bcsi.jwt";
+const USER_KEY  = "bcsi.user";
+
+function getToken()   { return localStorage.getItem(TOKEN_KEY); }
+function getUser()    {
+  try { return JSON.parse(localStorage.getItem(USER_KEY) || "null"); }
+  catch { return null; }
+}
+function saveSession(token, user) {
+  localStorage.setItem(TOKEN_KEY, token);
+  localStorage.setItem(USER_KEY, JSON.stringify(user));
+}
+function clearSession() {
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(USER_KEY);
+}
+
+function authHeaders() {
+  const t = getToken();
+  return t ? { Authorization: `Bearer ${t}` } : {};
+}
+
+/** API helper that 401-aware: surfaces a toast + drops session on auth failure. */
+async function apiFetch(url, opts = {}) {
+  const res = await fetch(url, {
+    ...opts,
+    headers: { "Content-Type": "application/json", ...authHeaders(), ...(opts.headers || {}) },
+  });
+  if (res.status === 401) {
+    clearSession();
+    renderUserState();
+    showToast("Session expired — please sign in again.", "error");
+    throw new Error("401");
+  }
+  return res;
+}
+
+function toggleAuthMenu() {
+  const m = $("authMenu");
+  if (m) m.classList.toggle("hidden");
+}
+
+function switchAuthTab(tab) {
+  document.querySelectorAll(".auth-tab").forEach(b =>
+    b.classList.toggle("active", b.dataset.tab === tab));
+  $("loginForm").classList.toggle("hidden",    tab !== "login");
+  $("registerForm").classList.toggle("hidden", tab !== "register");
+}
+
+async function submitLogin(ev) {
+  ev.preventDefault();
+  const username = $("loginUsername").value.trim();
+  const password = $("loginPassword").value;
+  try {
+    let res = await fetch("/api/v1/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, email: "x@x", password }),
+    });
+    if (!res.ok) {
+      // Try admin token endpoint (form-encoded) as a fallback for admins.
+      const form = new URLSearchParams({ username, password });
+      res = await fetch("/api/v1/auth/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: form.toString(),
+      });
+      if (!res.ok) throw new Error("Invalid credentials");
+    }
+    const data = await res.json();
+    saveSession(data.access_token, { username });
+
+    // Pull /users/me to get email + role for display.
+    try {
+      const me = await (await apiFetch("/api/v1/users/me")).json();
+      saveSession(data.access_token, me);
+    } catch { /* admin path or non-fatal */ }
+
+    renderUserState();
+    showToast(`Welcome, ${username}`, "success");
+    toggleAuthMenu();
+  } catch (e) {
+    showToast(e.message || "Sign-in failed", "error");
+  }
+  return false;
+}
+
+async function submitRegister(ev) {
+  ev.preventDefault();
+  const body = {
+    username: $("regUsername").value.trim(),
+    email:    $("regEmail").value.trim(),
+    password: $("regPassword").value,
+  };
+  try {
+    const res = await fetch("/api/v1/auth/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || "Registration failed");
+    }
+    // Auto-login after register.
+    $("loginUsername").value = body.username;
+    $("loginPassword").value = body.password;
+    switchAuthTab("login");
+    await submitLogin(new Event("submit"));
+  } catch (e) {
+    showToast(e.message, "error");
+  }
+  return false;
+}
+
+function logout() {
+  clearSession();
+  renderUserState();
+  showToast("Signed out", "success");
+}
+
+function renderUserState() {
+  const user = getUser();
+  const loggedIn = !!user && !!getToken();
+  $("userLabel").textContent = loggedIn ? (user.username || "Account") : "Sign in";
+
+  $("authForms").classList.toggle("hidden",   loggedIn);
+  $("authProfile").classList.toggle("hidden", !loggedIn);
+  if (loggedIn) {
+    $("profileUsername").textContent = user.username || "—";
+    $("profileEmail").textContent    = user.email    || "—";
+  }
+  // Show/hide user-scoped sections
+  $("portfolioSection").classList.toggle("hidden", !loggedIn);
+  $("alertsSection").classList.toggle("hidden",    !loggedIn);
+
+  if (loggedIn) {
+    refreshPortfolio();
+    refreshAlerts();
+  }
+}
+
+/* ── Portfolio ────────────────────────────────────────────────────────────── */
+
+async function refreshPortfolio() {
+  try {
+    const res = await apiFetch("/api/v1/users/me/portfolio");
+    if (!res.ok) return;
+    renderPortfolio(await res.json());
+  } catch { /* 401 already toasted */ }
+}
+
+function renderPortfolio(p) {
+  const empty = !p || (p.coverage === 0 && (p.missing_data || []).length === 0);
+  $("portfolioEmpty").classList.toggle("hidden", !empty);
+  $("portfolioBody").classList.toggle("hidden",   empty);
+  if (empty) return;
+
+  $("pfCount").textContent    = p.coverage;
+  $("pfBcsi").textContent     = p.bcsi.mean     != null ? num(p.bcsi.mean, 1)             : "—";
+  $("pfRisk").textContent     = p.risk.mean_risk_score   != null ? num(p.risk.mean_risk_score, 1)        : "—";
+  $("pfMomentum").textContent = p.momentum.mean_momentum_score != null
+                                ? num(p.momentum.mean_momentum_score, 1) : "—";
+
+  // Sector exposure bars
+  const sectors = p.sector_exposure || {};
+  const total = Object.values(sectors).reduce((a, b) => a + b, 0) || 1;
+  $("pfSectors").innerHTML = Object.entries(sectors).map(([s, n]) => {
+    const pct = Math.round((n / total) * 100);
+    return `<div class="sector-bar-item">
+      <div class="sector-bar-label"><span>${s}</span><span>${n} (${pct}%)</span></div>
+      <div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div></div>
+    </div>`;
+  }).join("");
+
+  // Highlights
+  const renderH = (label, arr) => arr.length === 0 ? "" :
+    `<div class="hl-block"><div class="hl-label">${label}</div>` +
+      arr.map(h => `<div class="hl-row">
+        <span class="ticker-badge">${h.ticker}</span>
+        <span>${h.name ?? ""}</span>
+        <span class="hl-bcsi ${bcsiClass(h.bcsi_label)}">${num(h.bcsi_score, 1)}</span>
+      </div>`).join("") +
+    `</div>`;
+  $("pfHighlights").innerHTML =
+    renderH("Strongest", p.highlights.strongest) +
+    renderH("Weakest",   p.highlights.weakest);
+
+  const missing = p.missing_data || [];
+  $("pfMissing").innerHTML = missing.length === 0 ? "" :
+    `<div class="pf-missing-note">Not yet analysed: <code>${missing.join(", ")}</code></div>`;
+}
+
+/* ── My Alerts ────────────────────────────────────────────────────────────── */
+
+async function refreshAlerts() {
+  try {
+    const res = await apiFetch("/api/v1/users/me/alerts");
+    if (!res.ok) return;
+    renderAlerts(await res.json());
+  } catch { /* 401 already handled */ }
+}
+
+function renderAlerts(alerts) {
+  if (!alerts.length) {
+    $("alertsList").innerHTML =
+      '<p class="empty" style="padding:14px 0">No active alerts.</p>';
+    return;
+  }
+  $("alertsList").innerHTML = alerts.map(a => `
+    <div class="alert-row">
+      <span class="ticker-badge">${a.ticker}</span>
+      <span class="alert-condition">${a.condition}</span>
+      <span class="alert-threshold">${a.threshold != null ? a.threshold : "—"}</span>
+      <button class="alert-delete" onclick="deleteAlert(${a.id})">×</button>
+    </div>
+  `).join("");
+}
+
+async function submitAlert(ev) {
+  ev.preventDefault();
+  const body = {
+    ticker:    $("alertTicker").value.trim().toUpperCase(),
+    condition: $("alertCondition").value,
+    threshold: $("alertThreshold").value === "" ? null : Number($("alertThreshold").value),
+  };
+  try {
+    const res = await apiFetch("/api/v1/users/me/alerts", {
+      method: "POST", body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || "Failed to create alert");
+    }
+    $("alertTicker").value = "";
+    $("alertThreshold").value = "";
+    refreshAlerts();
+    showToast("Alert added", "success");
+  } catch (e) { showToast(e.message, "error"); }
+  return false;
+}
+
+async function deleteAlert(id) {
+  try {
+    const res = await apiFetch(`/api/v1/users/me/alerts/${id}`, { method: "DELETE" });
+    if (res.ok) refreshAlerts();
+  } catch { /* handled */ }
+}
+
+/* ── boot ─────────────────────────────────────────────────────────────────── */
+
+// expose inline-referenced handlers
+window.analyzeCompany   = analyzeCompany;
+window.filterCompanies  = filterCompanies;
+window.toggleSection    = toggleSection;
+window.toggleAuthMenu   = toggleAuthMenu;
+window.switchAuthTab    = switchAuthTab;
+window.submitLogin      = submitLogin;
+window.submitRegister   = submitRegister;
+window.logout           = logout;
+window.refreshPortfolio = refreshPortfolio;
+window.refreshAlerts    = refreshAlerts;
+window.submitAlert      = submitAlert;
+window.deleteAlert      = deleteAlert;
+
+function bootAuth() {
+  // Click-outside closes the auth menu.
+  document.addEventListener("click", (e) => {
+    const menu = $("authMenu");
+    const btn  = $("userBtn");
+    if (!menu || menu.classList.contains("hidden")) return;
+    if (menu.contains(e.target) || btn.contains(e.target)) return;
+    menu.classList.add("hidden");
+  });
+  renderUserState();
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  init();
+  bootAuth();
+});

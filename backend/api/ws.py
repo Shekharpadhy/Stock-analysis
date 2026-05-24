@@ -36,7 +36,9 @@ async def ws_prices(ws: WebSocket) -> None:
 
     Client → Server: messages are silently discarded (read-only stream).
     """
+    from backend.services.metrics import REGISTRY as METRICS
     await manager.connect(ws)
+    METRICS.inc("websocket_connections_total")
     try:
         # Send stored prices immediately so the UI isn't blank on load.
         await send_snapshot(ws)
