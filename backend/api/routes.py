@@ -20,7 +20,7 @@ from backend.auth import (
 )
 from backend.database.db import (
     get_db, CompanyRecord, SectorProfile, GovernanceRecord,
-    AlertSubscription, User, WatchlistEntry, AuditLog,
+    AlertSubscription, User, WatchlistEntry, AuditLog, UserToken,
 )
 from backend.services.ingestion import (
     fetch_company_data,
@@ -48,6 +48,8 @@ from backend.services import jobs as job_svc
 from backend.services.scheduler import get_job_status
 from backend.services import portfolio as portfolio_svc
 from backend.services import audit
+from backend.services import user_tokens
+from backend.services import email_delivery
 from backend.services.metrics import REGISTRY as METRICS
 
 router = APIRouter()
@@ -65,7 +67,9 @@ def _validate_ticker(ticker: str) -> str:
 
 # ── Authentication ────────────────────────────────────────────────────────────
 @router.post("/auth/token")
+@limiter.limit(settings.rate_limit_auth_login)
 def login(
+    request:   Request,
     form_data: OAuth2PasswordRequestForm = Depends(),
     db:        Session = Depends(get_db),
 ):
@@ -950,12 +954,13 @@ class UserRegistration(BaseModel):
 
 
 class UserOut(BaseModel):
-    id:         int
-    username:   str
-    email:      str
-    role:       str
-    is_active:  bool
-    created_at: Optional[str]
+    id:             int
+    username:       str
+    email:          str
+    role:           str
+    is_active:      bool
+    email_verified: bool = False
+    created_at:     Optional[str]
 
 
 class WatchlistEntryIn(BaseModel):
@@ -971,7 +976,12 @@ class WatchlistEntryOut(BaseModel):
 
 
 @router.post("/auth/register", status_code=201, response_model=UserOut)
-def register_user(body: UserRegistration, db: Session = Depends(get_db)):
+@limiter.limit(settings.rate_limit_auth_register)
+def register_user(
+    request: Request,
+    body:    UserRegistration,
+    db:      Session = Depends(get_db),
+):
     """
     Create a new user account.  Usernames and emails must be unique.
     Passwords are bcrypt-hashed before storage.
@@ -1003,15 +1013,36 @@ def register_user(body: UserRegistration, db: Session = Depends(get_db)):
     db.refresh(user)
     audit.record(db, actor=user.username, action="user.register",
                  target=str(user.id), extra={"email": user.email})
+
+    # Issue email-verification token + send the confirmation link.  Email
+    # delivery failure is non-fatal — the user still has the account, and
+    # /auth/verify/resend lets them try again.
+    try:
+        token = user_tokens.generate(
+            db, user.id, purpose="email_verify",
+            ttl_hours=settings.email_verification_ttl_hours,
+        )
+        link  = f"{settings.public_base_url.rstrip('/')}/api/v1/auth/verify?token={token}"
+        email_delivery.send_verification_email(user.email, link)
+    except Exception as exc:                              # noqa: BLE001
+        log.warning("register(%s): verification email send failed — %s",
+                    user.username, exc)
+
     return UserOut(
         id=user.id, username=user.username, email=user.email,
         role=user.role, is_active=user.is_active,
+        email_verified=user.email_verified,
         created_at=user.created_at.isoformat() if user.created_at else None,
     )
 
 
 @router.post("/auth/login")
-def login_user(body: UserRegistration, db: Session = Depends(get_db)):
+@limiter.limit(settings.rate_limit_auth_login)
+def login_user(
+    request: Request,
+    body:    UserRegistration,
+    db:      Session = Depends(get_db),
+):
     """
     Authenticate a regular user (username + password → bearer JWT).
     For the built-in admin account use POST /auth/token instead.
@@ -1036,6 +1067,143 @@ def login_user(body: UserRegistration, db: Session = Depends(get_db)):
     return {"access_token": token, "token_type": "bearer"}
 
 
+# ── Email verification + password reset ───────────────────────────────────────
+
+class PasswordResetRequest(BaseModel):
+    email: str
+
+
+class PasswordResetConfirm(BaseModel):
+    token:        str
+    new_password: str
+
+
+class ResendVerification(BaseModel):
+    email: str
+
+
+@router.get("/auth/verify")
+@limiter.limit(settings.rate_limit_auth_verify)
+def verify_email(
+    request: Request,
+    token:   str,
+    db:      Session = Depends(get_db),
+):
+    """
+    Mark a user's email as verified.  The link in the email points here.
+
+    Idempotent failure surface — invalid, expired, or already-used tokens
+    all return the same generic 400 so we don't leak which case it is.
+    """
+    user_id = user_tokens.redeem(db, token, purpose="email_verify")
+    if user_id is None:
+        raise HTTPException(status_code=400,
+                            detail="Invalid or expired verification link.")
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=400,
+                            detail="Invalid or expired verification link.")
+    if not user.email_verified:
+        user.email_verified = True
+        db.commit()
+    audit.record(db, actor=user.username, action="auth.email_verified",
+                 target=str(user.id))
+    return {"status": "verified", "username": user.username}
+
+
+@router.post("/auth/verify/resend", status_code=202)
+@limiter.limit(settings.rate_limit_auth_verify)
+def resend_verification(
+    request: Request,
+    body:    ResendVerification,
+    db:      Session = Depends(get_db),
+):
+    """
+    Re-issue the verification email.  Always returns 202 regardless of
+    whether the email exists — protects against account-enumeration via
+    timing or response shape.
+    """
+    user = db.query(User).filter(User.email == body.email.strip().lower()).first()
+    if user and not user.email_verified:
+        # Burn any previous live verify token so only the freshest link works.
+        user_tokens.invalidate_pending(db, user.id, purpose="email_verify")
+        token = user_tokens.generate(
+            db, user.id, purpose="email_verify",
+            ttl_hours=settings.email_verification_ttl_hours,
+        )
+        link  = f"{settings.public_base_url.rstrip('/')}/api/v1/auth/verify?token={token}"
+        email_delivery.send_verification_email(user.email, link)
+        audit.record(db, actor=user.username, action="auth.verify_resend",
+                     target=str(user.id))
+    return {"status": "accepted"}
+
+
+@router.post("/auth/password-reset/request", status_code=202)
+@limiter.limit(settings.rate_limit_auth_reset)
+def password_reset_request(
+    request: Request,
+    body:    PasswordResetRequest,
+    db:      Session = Depends(get_db),
+):
+    """
+    Issue a password-reset link to the email on file.
+
+    Returns 202 unconditionally — same response shape whether the email
+    matches an account or not.  This prevents account enumeration.  The
+    user only learns the email was registered if they actually receive
+    the message in their inbox.
+    """
+    user = db.query(User).filter(User.email == body.email.strip().lower()).first()
+    if user and user.is_active:
+        user_tokens.invalidate_pending(db, user.id, purpose="password_reset")
+        token = user_tokens.generate(
+            db, user.id, purpose="password_reset",
+            ttl_hours=settings.password_reset_ttl_hours,
+        )
+        link  = (f"{settings.public_base_url.rstrip('/')}"
+                 f"/api/v1/auth/password-reset/confirm?token={token}")
+        email_delivery.send_password_reset_email(user.email, link)
+        audit.record(db, actor=user.username, action="auth.password_reset_request",
+                     target=str(user.id))
+    return {"status": "accepted"}
+
+
+@router.post("/auth/password-reset/confirm")
+@limiter.limit(settings.rate_limit_auth_reset)
+def password_reset_confirm(
+    request: Request,
+    body:    PasswordResetConfirm,
+    db:      Session = Depends(get_db),
+):
+    """
+    Complete a password reset.  Verifies the token, sets the new password
+    (hashed with argon2id), and invalidates all other pending reset tokens
+    for the same user.
+    """
+    if len(body.new_password) < 8:
+        raise HTTPException(status_code=422,
+                            detail="Password must be ≥ 8 characters.")
+
+    user_id = user_tokens.redeem(db, body.token, purpose="password_reset")
+    if user_id is None:
+        raise HTTPException(status_code=400,
+                            detail="Invalid or expired reset link.")
+
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user or not user.is_active:
+        raise HTTPException(status_code=400,
+                            detail="Invalid or expired reset link.")
+
+    user.hashed_password = hash_password(body.new_password)
+    user_tokens.invalidate_pending(db, user.id, purpose="password_reset")
+    db.commit()
+
+    audit.record(db, actor=user.username, action="auth.password_reset",
+                 target=str(user.id))
+    log.info("auth: password reset completed for user %s", user.username)
+    return {"status": "ok"}
+
+
 @router.get("/users/me", response_model=UserOut)
 def get_current_user(
     token_payload: dict = Depends(require_user_auth),
@@ -1048,7 +1216,8 @@ def get_current_user(
     if token_payload.get("role") == "admin" and username == "admin":
         return UserOut(
             id=0, username="admin", email="admin@bcsi.local",
-            role="admin", is_active=True, created_at=None,
+            role="admin", is_active=True, email_verified=True,
+            created_at=None,
         )
 
     user = db.query(User).filter(User.username == username).first()
@@ -1057,6 +1226,7 @@ def get_current_user(
     return UserOut(
         id=user.id, username=user.username, email=user.email,
         role=user.role, is_active=user.is_active,
+        email_verified=user.email_verified,
         created_at=user.created_at.isoformat() if user.created_at else None,
     )
 
@@ -1304,6 +1474,7 @@ def list_users(
         UserOut(
             id=u.id, username=u.username, email=u.email,
             role=u.role, is_active=u.is_active,
+            email_verified=u.email_verified,
             created_at=u.created_at.isoformat() if u.created_at else None,
         )
         for u in users
@@ -1313,9 +1484,19 @@ def list_users(
 # ── Background scheduler endpoints ────────────────────────────────────────────
 
 @router.get("/scheduler/status")
-def scheduler_status(_: dict = Depends(require_admin_auth)):
-    """Return the current scheduler state — running flag + per-job next-run."""
-    return get_job_status()
+def scheduler_status(
+    _:  dict    = Depends(require_admin_auth),
+    db: Session = Depends(get_db),
+):
+    """
+    Return the current scheduler state: running flag, per-job next-run,
+    and which worker currently holds the leader-election lock.
+    """
+    from backend.services import scheduler_lock
+    base = get_job_status()
+    base["lock"] = scheduler_lock.current_holder(db)
+    base["worker_id"] = scheduler_lock.WORKER_ID
+    return base
 
 
 @router.post("/scheduler/run/{job_name}")

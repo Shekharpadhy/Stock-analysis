@@ -96,6 +96,12 @@ def configure_logging(level: str = "INFO", fmt: str = "text") -> None:
             datefmt="%Y-%m-%d %H:%M:%S",
         ))
 
+    # Attach the request-id filter so every LogRecord carries the active
+    # request_id (or "-" when emitted outside a request).  Lazy import to
+    # avoid a circular dependency with backend.middleware.
+    from backend.middleware import RequestIDLogFilter
+    handler.addFilter(RequestIDLogFilter())
+
     root.addHandler(handler)
     root.setLevel(level.upper())
 

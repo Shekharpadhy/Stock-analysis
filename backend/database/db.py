@@ -320,6 +320,7 @@ class User(Base):
     hashed_password = Column(String, nullable=False)
     role            = Column(String, default="user", nullable=False)   # "user" | "admin"
     is_active       = Column(Boolean, default=True, nullable=False)
+    email_verified  = Column(Boolean, default=False, nullable=False)
     created_at      = Column(DateTime, default=datetime.utcnow)
 
 
@@ -340,6 +341,60 @@ class WatchlistEntry(Base):
     __table_args__ = (
         UniqueConstraint("user_id", "ticker", name="uq_watchlist_user_ticker"),
     )
+
+
+class UserToken(Base):
+    """
+    Single-use token attached to a user account.  Backs email verification,
+    password reset, and any future invite/onboarding flow.
+
+    What's stored
+    ─────────────
+    Only the SHA-256 hash of the token — never the plaintext.  An attacker
+    with a DB dump still cannot replay a valid link.
+
+    purpose values
+    ──────────────
+      "email_verify"    — issued at registration / on request to re-verify
+      "password_reset"  — issued on /auth/password-reset/request
+
+    Single-use semantics
+    ────────────────────
+    Marked `used_at` on first successful redemption.  A token is valid only
+    when used_at IS NULL AND expires_at > now.
+    """
+    __tablename__ = "user_tokens"
+
+    id         = Column(Integer, primary_key=True, autoincrement=True)
+    user_id    = Column(Integer, nullable=False, index=True)
+    purpose    = Column(String, nullable=False, index=True)
+    token_hash = Column(String, nullable=False, unique=True, index=True)
+    expires_at = Column(DateTime, nullable=False)
+    used_at    = Column(DateTime)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class SchedulerLock(Base):
+    """
+    Single-row table that coordinates which worker is the active scheduler
+    leader.  The row is keyed on `name` (always 'singleton' today, but the
+    column lets us run multiple independent schedulers in future).
+
+    Protocol
+    ────────
+      worker_id   UUID of the holder (regenerated each process boot)
+      acquired_at when the holder first won the lock
+      expires_at  lease deadline — past this point, any worker may steal
+
+    Heartbeat refreshes `expires_at`.  If a leader dies, no heartbeat lands
+    and another worker reliably takes over after the lease expires.
+    """
+    __tablename__ = "scheduler_lock"
+
+    name        = Column(String, primary_key=True)
+    worker_id   = Column(String, nullable=False)
+    acquired_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    expires_at  = Column(DateTime, nullable=False)
 
 
 class AuditLog(Base):

@@ -109,11 +109,23 @@ def start_scheduler() -> Optional[AsyncIOScheduler]:
 
 
 def shutdown_scheduler() -> None:
-    """Gracefully stop the scheduler if it's running."""
+    """Gracefully stop the scheduler if it's running and release the lock
+    so peer workers can take leadership without waiting for the lease."""
     global _scheduler
     if _scheduler is not None and _scheduler.running:
         _scheduler.shutdown(wait=False)
         log.info("scheduler: shut down")
+        # Best-effort lock release.
+        try:
+            from backend.database.db import SessionLocal
+            from backend.services import scheduler_lock
+            db = SessionLocal()
+            try:
+                scheduler_lock.release(db)
+            finally:
+                db.close()
+        except Exception as exc:                          # noqa: BLE001
+            log.warning("scheduler: lock release failed — %s", exc)
     _scheduler = None
 
 

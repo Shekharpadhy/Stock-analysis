@@ -29,10 +29,31 @@ class Settings(BaseSettings):
     # Per-IP rate limits (slowapi syntax, e.g. "120/minute")
     rate_limit_default: str = "120/minute"
     rate_limit_analyze: str = "10/minute"
+    # Tight throttles on auth endpoints to slow brute-force attempts.  Pick
+    # numbers that are friendly to legitimate retypes but punitive at scale.
+    rate_limit_auth_login:    str = "10/minute"
+    rate_limit_auth_register: str = "5/hour"
+    rate_limit_auth_reset:    str = "3/hour"
+    rate_limit_auth_verify:   str = "20/hour"
+    # Master toggle — disabled in tests so the suite doesn't trip its own
+    # throttles. Always true in production.
+    rate_limit_enabled: bool = True
+
+    # Public-facing base URL used to build verify / reset email links.
+    # Must include scheme + host (no trailing slash).
+    public_base_url: str = "http://localhost:8000"
+
+    # Lifetimes (in hours) for account-lifecycle tokens.
+    email_verification_ttl_hours: int = 24
+    password_reset_ttl_hours:     int = 1
 
     # JWT authentication — JWT_SECRET and ADMIN_PASSWORD MUST be overridden
     # via env before deployment. The defaults below are intentionally insecure.
     jwt_secret: str = "dev-only-insecure-secret-change-me"
+    # Optional secondary verifier — accept tokens signed with the previous
+    # secret during a rotation window.  New tokens are always signed with
+    # JWT_SECRET. Empty string disables the fallback.
+    jwt_secret_previous: str = ""
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 60
     admin_username: str = "admin"

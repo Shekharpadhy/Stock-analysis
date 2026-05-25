@@ -102,21 +102,45 @@ def create_access_token(subject: str, role: str = "admin") -> str:
 
 
 def _decode_token(token: str) -> dict:
-    """Decode and validate a bearer JWT.  Raises 401 on any failure."""
+    """
+    Decode and validate a bearer JWT, trying the current secret first and
+    falling back to JWT_SECRET_PREVIOUS during a rotation window.  Raises 401
+    on any failure.
+
+    Rotation procedure
+    ──────────────────
+    1. Set JWT_SECRET_PREVIOUS = (the current JWT_SECRET) and JWT_SECRET = new
+       value.  Restart workers.  All NEW tokens carry the new signature; all
+       OLD tokens still verify against the previous secret.
+    2. Wait jwt_expire_minutes (default 60) for every legacy token to expire.
+    3. Unset JWT_SECRET_PREVIOUS.  Restart workers.  Rotation complete.
+    """
     credentials_error = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Invalid or expired authentication token.",
         headers={"WWW-Authenticate": "Bearer"},
     )
-    try:
-        payload = jwt.decode(
-            token, settings.jwt_secret, algorithms=[settings.jwt_algorithm]
-        )
-    except JWTError:
-        raise credentials_error
-    if not payload.get("sub"):
-        raise credentials_error
-    return payload
+
+    # Build the candidate-keys list in priority order.  De-dup just in case
+    # the operator left both env vars set to the same value.
+    candidate_keys = [settings.jwt_secret]
+    if settings.jwt_secret_previous and \
+            settings.jwt_secret_previous != settings.jwt_secret:
+        candidate_keys.append(settings.jwt_secret_previous)
+
+    last_err: Optional[JWTError] = None
+    for key in candidate_keys:
+        try:
+            payload = jwt.decode(token, key, algorithms=[settings.jwt_algorithm])
+        except JWTError as exc:
+            last_err = exc
+            continue
+        if not payload.get("sub"):
+            raise credentials_error
+        return payload
+
+    # No key matched.
+    raise credentials_error
 
 
 # ── dependencies ──────────────────────────────────────────────────────────────

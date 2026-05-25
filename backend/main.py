@@ -20,6 +20,7 @@ from backend.limiter import limiter
 from backend.services.price_stream import price_broadcast_loop
 from backend.services.ml_model import load_model_from_disk
 from backend.services.scheduler import start_scheduler, shutdown_scheduler
+from backend.middleware import RequestIDMiddleware
 
 # Install the formatter before anyone else logs (modules imported above
 # may have already grabbed the root logger; configure_logging() resets it).
@@ -82,6 +83,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ── Request ID — added LAST so it wraps everything (Starlette processes
+#    middleware in reverse-add order).  Even a 429 from SlowAPI now carries
+#    the X-Request-ID header.
+app.add_middleware(RequestIDMiddleware)
 
 app.include_router(router,    prefix="/api/v1")
 app.include_router(ws_router, prefix="/api/v1")

@@ -32,6 +32,7 @@ from backend.database.db import (
     SessionLocal, CompanyRecord, AlertSubscription,
 )
 from backend.services import alerts as alert_svc
+from backend.services import scheduler_lock
 
 log = logging.getLogger(__name__)
 
@@ -58,6 +59,26 @@ def _with_session(work: Callable[[Any], Dict[str, Any]]) -> Dict[str, Any]:
         db.close()
 
 
+def _with_leader_session(work: Callable[[Any], Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Same as _with_session, but the job body only runs when this worker holds
+    the scheduler lock.  Followers report `{"skipped": "not_leader"}` so the
+    summary dict is still consistent and the metric counter still moves.
+    """
+    db = SessionLocal()
+    try:
+        if not scheduler_lock.try_acquire(db):
+            log.debug("job: skipped — another worker holds the scheduler lock")
+            return {"skipped": "not_leader",
+                    "holder":  scheduler_lock.current_holder(db)}
+        return work(db)
+    except Exception as exc:
+        log.exception("job: unexpected failure")
+        return {"error": str(exc)}
+    finally:
+        db.close()
+
+
 # ── job: prediction maturity scoring ──────────────────────────────────────────
 
 def score_matured_predictions() -> Dict[str, Any]:
@@ -73,7 +94,7 @@ def score_matured_predictions() -> Dict[str, Any]:
         log.info("jobs: matured-prediction scoring — %s", result)
         return {"job": "score_matured_predictions", **result}
 
-    return _with_session(_work)
+    return _with_leader_session(_work)
 
 
 # ── job: alert evaluation (absolute + cooldown) ───────────────────────────────
@@ -158,7 +179,7 @@ def evaluate_active_alerts(now: Optional[datetime] = None) -> Dict[str, Any]:
         log.info("jobs: alert sweep — %s", result)
         return result
 
-    return _with_session(_work)
+    return _with_leader_session(_work)
 
 
 # ── job: weekly ML model retrain ──────────────────────────────────────────────
@@ -184,7 +205,7 @@ def retrain_ml_model() -> Dict[str, Any]:
             return {"job": "retrain_ml_model", "trained": False,
                     "reason": str(exc)}
 
-    return _with_session(_work)
+    return _with_leader_session(_work)
 
 
 # ── job: weekly sector recalibration ──────────────────────────────────────────
@@ -198,4 +219,4 @@ def recalibrate_sectors() -> Dict[str, Any]:
         log.info("jobs: sector recalibration — %s", result)
         return {"job": "recalibrate_sectors", **(result or {})}
 
-    return _with_session(_work)
+    return _with_leader_session(_work)

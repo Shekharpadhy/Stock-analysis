@@ -14,4 +14,5 @@ from backend.config import settings
 limiter = Limiter(
     key_func=get_remote_address,
     default_limits=[settings.rate_limit_default],
+    enabled=settings.rate_limit_enabled,
 )

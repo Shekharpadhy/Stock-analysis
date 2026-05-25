@@ -9,3 +9,6 @@
 import os
 
 os.environ.setdefault("SCHEDULER_ENABLED", "false")
+# Tests hit auth endpoints many times — disable the rate limiter here so the
+# suite doesn't trip its own throttles.  Production keeps it on.
+os.environ.setdefault("RATE_LIMIT_ENABLED", "false")
