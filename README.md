@@ -14,6 +14,16 @@
 </p>
 
 <p align="center">
+  <b>🚀 Live demo:</b> <a href="https://bcsi-web.onrender.com"><code>bcsi-web.onrender.com</code></a>
+  &nbsp;·&nbsp;
+  <a href="https://render.com/deploy?repo=https://github.com/shakesss/banking-client-sector-intelligence"><img alt="Deploy to Render" src="https://render.com/images/deploy-to-render-button.svg" height="22"></a>
+</p>
+
+<p align="center">
+  <sub>Free Render tier sleeps after 15 min of inactivity — first request may take ~30s to wake.</sub>
+</p>
+
+<p align="center">
   <i>BCSI = Banking Client Sector Intelligence.</i><br/>
   <i>Think Bloomberg-lite, but open source, explainable, and self-hostable for &lt; $50/mo.</i>
 </p>
