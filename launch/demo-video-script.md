@@ -68,7 +68,7 @@
 > *"Four hundred forty-three tests. Eighty percent coverage. Audit log, JWT rotation, leader-elected scheduler, request-ID correlation — this is production-grade, not toy-grade. The DEPLOYMENT, SECURITY, and PRIVACY docs are in the repo."*
 
 > **[01:25 – 01:30] CTA**
-> **Visual**: GitHub repo URL on screen, large and centred. `github.com/<your-handle>/bcsi`.
+> **Visual**: GitHub repo URL on screen, large and centred. `github.com/Shekharpadhy/Stock-analysis`.
 > **Voice-over**:
 > *"MIT licensed. Five minutes from clone to running. Link's below — star it if it'd save your team time."*
 

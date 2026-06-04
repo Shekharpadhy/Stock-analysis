@@ -141,6 +141,6 @@ The code is open source. The composition function above is ~30 lines. The hard p
 
 ---
 
-**BCSI is at github.com/<your-handle>/bcsi. MIT licensed. Five-dimension composite scoring with confidence as a first-class output, ML distress prediction with SHAP explanations, real-time prices, multi-user watchlists. Self-hosted on a $7/mo VPS.**
+**BCSI is at github.com/Shekharpadhy/Stock-analysis. MIT licensed. Five-dimension composite scoring with confidence as a first-class output, ML distress prediction with SHAP explanations, real-time prices, multi-user watchlists. Self-hosted on a $7/mo VPS.**
 
 *Read time was 9 minutes. If it was worth that, a star is the cheapest way to repay it.*

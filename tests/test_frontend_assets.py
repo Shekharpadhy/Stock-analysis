@@ -93,18 +93,45 @@ def test_app_js_exposes_handler_on_window(app_js, handler):
 
 # ── Backend↔frontend endpoint contracts ──────────────────────────────────────
 
-@pytest.mark.parametrize("path", [
-    "/api/v1/auth/register",
-    "/api/v1/auth/login",
-    "/api/v1/auth/token",
-    "/api/v1/users/me",
-    "/api/v1/users/me/portfolio",
-    "/api/v1/users/me/alerts",
+@pytest.mark.parametrize("suffix", [
+    # Path *after* the /api/v1 prefix (app.js now constructs full URLs as
+    # `API + "/..."` or `${API}/...` so we look for the suffix the call
+    # appends to the API constant).  This keeps the contract test useful
+    # while tolerating the BACKEND_BASE-aware refactor for split deploys.
+    "/auth/register",
+    "/auth/login",
+    "/auth/token",
+    "/users/me",
+    "/users/me/portfolio",
+    "/users/me/alerts",
 ])
-def test_app_js_calls_expected_backend_path(app_js, path):
-    """If we rename a route on the backend, the matching JS call breaks."""
-    assert path in app_js, \
-        f"app.js no longer calls {path} — rename in lockstep with backend"
+def test_app_js_calls_expected_backend_path(app_js, suffix):
+    """If a route is renamed on the backend, the matching JS call breaks."""
+    # Either via fetch(API + "...") or apiFetch(API + "...") or fetch(`${API}...`)
+    expected_variants = [
+        f'API + "{suffix}"',
+        f"API + '{suffix}'",
+        f"${{API}}{suffix}",
+    ]
+    assert any(v in app_js for v in expected_variants), \
+        f"app.js no longer calls {suffix} — rename in lockstep with backend " \
+        f"(checked variants: {expected_variants})"
+
+
+def test_app_js_uses_backend_base_constant(app_js):
+    """The BACKEND_BASE override hook must be present so split deploys work."""
+    assert "BACKEND_BASE" in app_js, \
+        "frontend lost the BACKEND_BASE constant — split deploys will break"
+    assert "window.BCSI_BACKEND_URL" in app_js, \
+        "frontend doesn't read window.BCSI_BACKEND_URL — index.html override " \
+        "won't take effect"
+
+
+def test_index_html_has_backend_url_override_hook(index_html):
+    """index.html must declare the window.BCSI_BACKEND_URL placeholder so
+    deploy targets can override the backend domain in one line."""
+    assert "BCSI_BACKEND_URL" in index_html, \
+        "index.html missing the window.BCSI_BACKEND_URL placeholder script"
 
 
 # ── Script + stylesheet linkage ──────────────────────────────────────────────

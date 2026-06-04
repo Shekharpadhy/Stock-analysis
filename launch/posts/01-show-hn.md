@@ -27,7 +27,7 @@ Show HN: BCSI – open-source company risk scoring with five dimensions and SHAP
 Your GitHub repo (NOT the demo site — HN weights `github.com` submissions higher and the title chip renders better).
 
 ```
-https://github.com/<your-handle>/bcsi
+https://github.com/Shekharpadhy/Stock-analysis
 ```
 
 If you have a hosted demo, link it in the body instead.
@@ -74,7 +74,7 @@ What it isn't: a SaaS, a strategy backtester, or financial advice. It's a
 self-hostable analyst dashboard. Costs a Hetzner VPS to run.
 
 Demo video (90s): <YOUTUBE_LINK>
-Repo: https://github.com/<your-handle>/bcsi
+Repo: https://github.com/Shekharpadhy/Stock-analysis
 
 Built in close collaboration with Claude — every commit shows it. Happy to
 talk about that side of the work too. What would you change?

@@ -37,3 +37,12 @@ logs/
 # Data cache
 data/cache/
 data/raw/
+
+# Coverage report artifacts
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Claude Code local metadata
+.claude/

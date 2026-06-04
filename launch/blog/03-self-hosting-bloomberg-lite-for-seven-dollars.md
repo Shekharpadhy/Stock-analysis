@@ -59,7 +59,7 @@ systemctl restart sshd
 curl -fsSL https://get.docker.com | sh
 
 # 4. Clone BCSI.
-git clone https://github.com/<your-handle>/bcsi.git /opt/bcsi
+git clone https://github.com/Shekharpadhy/Stock-analysis.git /opt/bcsi
 cd /opt/bcsi
 
 # 5. Generate strong secrets.
@@ -208,12 +208,12 @@ If your work depends on tick-level execution or fixed-income coverage, Bloomberg
 
 ## Where to go from here
 
-The full deployment guide — including the scheduler-singleton constraint, JWT rotation procedure, and a pre-deployment checklist — is in [`DEPLOYMENT.md`](https://github.com/<your-handle>/bcsi/blob/main/DEPLOYMENT.md) in the repo.
+The full deployment guide — including the scheduler-singleton constraint, JWT rotation procedure, and a pre-deployment checklist — is in [`DEPLOYMENT.md`](https://github.com/Shekharpadhy/Stock-analysis/blob/main/DEPLOYMENT.md) in the repo.
 
 If you spin this up and hit issues, file an issue on GitHub — every install is a chance for me to find another rough edge in the docs.
 
 ---
 
-**BCSI is at github.com/<your-handle>/bcsi. MIT licensed, $6/month to run, 60 minutes to deploy. If you're paying for Simply Wall St or FactSet and the spreadsheet is doing 80% of the work anyway, this might be the thing you've been waiting for.**
+**BCSI is at github.com/Shekharpadhy/Stock-analysis. MIT licensed, $6/month to run, 60 minutes to deploy. If you're paying for Simply Wall St or FactSet and the spreadsheet is doing 80% of the work anyway, this might be the thing you've been waiting for.**
 
 *Star the repo if you'd actually deploy it.*

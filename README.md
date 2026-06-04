@@ -16,7 +16,7 @@
 <p align="center">
   <b>🚀 Live demo:</b> <a href="https://bcsi-web.onrender.com"><code>bcsi-web.onrender.com</code></a>
   &nbsp;·&nbsp;
-  <a href="https://render.com/deploy?repo=https://github.com/shakesss/banking-client-sector-intelligence"><img alt="Deploy to Render" src="https://render.com/images/deploy-to-render-button.svg" height="22"></a>
+  <a href="https://render.com/deploy?repo=https://github.com/Shekharpadhy/Stock-analysis"><img alt="Deploy to Render" src="https://render.com/images/deploy-to-render-button.svg" height="22"></a>
 </p>
 
 <p align="center">
@@ -99,7 +99,7 @@ BCSI is closer to a **finished platform** than a research library. If you want t
 Five minutes from clone to a running dashboard.
 
 ```bash
-git clone https://github.com/your-org/bcsi.git
+git clone https://github.com/Shekharpadhy/Stock-analysis.git
 cd bcsi
 
 # Option 1 — Docker (recommended)
@@ -224,7 +224,7 @@ See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the full guide.
 
 ## License
 
-MIT. Use it for anything you want. If it makes you money or saves your team time, [star the repo](https://github.com/your-org/bcsi) — that's how this stays alive.
+MIT. Use it for anything you want. If it makes you money or saves your team time, [star the repo](https://github.com/Shekharpadhy/Stock-analysis) — that's how this stays alive.
 
 ---
 

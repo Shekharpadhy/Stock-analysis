@@ -68,8 +68,12 @@ services:
         value: "true"
       - key: LOG_FORMAT
         value: json
+      # CORS must include the Vercel frontend domain when running split-deploy.
+      # Replace the placeholder Vercel URL with your real one after deploy.
+      # For a full Render deploy (frontend + backend on same domain), set to ""
+      # or a strict allowlist of your domains — see DEPLOY-SPLIT.md.
       - key: CORS_ORIGINS
-        value: "*"                    # tighten this manually in Render UI for prod
+        value: "https://stock-analysis.vercel.app,http://localhost:3000,http://localhost:8000"
       # Optional — operator sets these after deploy if they want email/Slack alerts
       - key: ALERT_SMTP_HOST
         sync: false

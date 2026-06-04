@@ -127,7 +127,7 @@ Read the code, fork it, run it for your team.
 ## Tweet 8 (the CTA)
 
 ```
-Repo: github.com/<your-handle>/bcsi
+Repo: github.com/Shekharpadhy/Stock-analysis
 Show HN: <HN_LINK>
 Demo: <DEMO_URL>
 

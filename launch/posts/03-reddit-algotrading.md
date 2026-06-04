@@ -31,7 +31,7 @@ A self-hosted Bloomberg-lite with SHAP-explained distress predictions [open sour
 ## Body
 
 ```
-TL;DR: github.com/<your-handle>/bcsi — MIT licensed, self-hostable, 90-sec
+TL;DR: github.com/Shekharpadhy/Stock-analysis — MIT licensed, self-hostable, 90-sec
 demo here: <DEMO_URL>
 
 ---

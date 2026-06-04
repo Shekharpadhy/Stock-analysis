@@ -299,6 +299,15 @@
     <p>Fetching live data...</p>
   </div>
 
+  <!--
+    Backend URL override.
+    Default empty → app.js uses same-origin requests (docker-compose, full
+    Render deploy, dev).  For split deploys (Vercel frontend + Render
+    backend), set this to your backend URL, e.g.:
+        window.BCSI_BACKEND_URL = "https://bcsi-web.onrender.com";
+    The DEPLOY-SPLIT.md walkthrough explains the exact one-line edit.
+  -->
+  <script>window.BCSI_BACKEND_URL = "";</script>
   <script src="/static/app.js"></script>
 </body>
 </html>

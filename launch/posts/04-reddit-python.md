@@ -75,14 +75,14 @@ It is NOT for: backtesting strategies (use vectorbt), automating execution
   ~50 lines for what we needed)
 - Vanilla JS frontend, no build toolchain (deliberate)
 
-The [SECURITY.md](https://github.com/<your-handle>/bcsi/blob/main/SECURITY.md)
-and [DEPLOYMENT.md](https://github.com/<your-handle>/bcsi/blob/main/DEPLOYMENT.md)
+The [SECURITY.md](https://github.com/Shekharpadhy/Stock-analysis/blob/main/SECURITY.md)
+and [DEPLOYMENT.md](https://github.com/Shekharpadhy/Stock-analysis/blob/main/DEPLOYMENT.md)
 might be more interesting than the engine code itself if you've never
 wired a production FastAPI app end-to-end.
 
 # Links
 
-- Repo: https://github.com/<your-handle>/bcsi
+- Repo: https://github.com/Shekharpadhy/Stock-analysis
 - Demo video (90s): <DEMO_URL>
 - Live demo: <DEMO_SITE_URL>
 

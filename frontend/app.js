@@ -5,7 +5,13 @@
  * Talks to the FastAPI backend mounted under /api/v1.
  * ======================================================================== */
 
-const API = "/api/v1";
+// ── Backend base URL ────────────────────────────────────────────────────────
+// Default: empty string → same-origin requests (docker-compose, full Render
+// deploy, local dev).  Override by setting window.BCSI_BACKEND_URL in
+// index.html, e.g. when the frontend is hosted on Vercel and the backend on
+// Render at a different domain.  See DEPLOY-SPLIT.md.
+const BACKEND_BASE = (window.BCSI_BACKEND_URL || "").replace(/\/$/, "");
+const API = BACKEND_BASE + "/api/v1";
 let allCompanies = [];          // last full fetch, used for client-side filtering
 
 /* ── tiny helpers ─────────────────────────────────────────────────────────── */
@@ -400,7 +406,17 @@ function renderDetail(c, peers, risk, bcsiData) {
 }
 
 /* ── WebSocket price stream ───────────────────────────────────────────────── */
-const WS_URL = `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/api/v1/ws/prices`;
+// WebSocket URL — derived from BACKEND_BASE when set (split deploy), else
+// same-origin.  http→ws and https→wss automatically.
+const WS_URL = (() => {
+  if (BACKEND_BASE) {
+    const u = new URL(BACKEND_BASE);
+    const proto = u.protocol === "https:" ? "wss:" : "ws:";
+    return `${proto}//${u.host}/api/v1/ws/prices`;
+  }
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  return `${proto}//${location.host}/api/v1/ws/prices`;
+})();
 const WS_RECONNECT_BASE  = 2000;   // ms — initial back-off delay
 const WS_RECONNECT_MAX   = 30000;  // ms — cap back-off at 30 s
 const WS_SILENCE_TIMEOUT = 70000;  // ms — reconnect if no msg for 70 s
@@ -596,7 +612,7 @@ async function submitLogin(ev) {
   const username = $("loginUsername").value.trim();
   const password = $("loginPassword").value;
   try {
-    let res = await fetch("/api/v1/auth/login", {
+    let res = await fetch(API + "/auth/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username, email: "x@x", password }),
@@ -604,7 +620,7 @@ async function submitLogin(ev) {
     if (!res.ok) {
       // Try admin token endpoint (form-encoded) as a fallback for admins.
       const form = new URLSearchParams({ username, password });
-      res = await fetch("/api/v1/auth/token", {
+      res = await fetch(API + "/auth/token", {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: form.toString(),
@@ -616,7 +632,7 @@ async function submitLogin(ev) {
 
     // Pull /users/me to get email + role for display.
     try {
-      const me = await (await apiFetch("/api/v1/users/me")).json();
+      const me = await (await apiFetch(API + "/users/me")).json();
       saveSession(data.access_token, me);
     } catch { /* admin path or non-fatal */ }
 
@@ -637,7 +653,7 @@ async function submitRegister(ev) {
     password: $("regPassword").value,
   };
   try {
-    const res = await fetch("/api/v1/auth/register", {
+    const res = await fetch(API + "/auth/register", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -688,7 +704,7 @@ function renderUserState() {
 
 async function refreshPortfolio() {
   try {
-    const res = await apiFetch("/api/v1/users/me/portfolio");
+    const res = await apiFetch(API + "/users/me/portfolio");
     if (!res.ok) return;
     renderPortfolio(await res.json());
   } catch { /* 401 already toasted */ }
@@ -739,7 +755,7 @@ function renderPortfolio(p) {
 
 async function refreshAlerts() {
   try {
-    const res = await apiFetch("/api/v1/users/me/alerts");
+    const res = await apiFetch(API + "/users/me/alerts");
     if (!res.ok) return;
     renderAlerts(await res.json());
   } catch { /* 401 already handled */ }
@@ -769,7 +785,7 @@ async function submitAlert(ev) {
     threshold: $("alertThreshold").value === "" ? null : Number($("alertThreshold").value),
   };
   try {
-    const res = await apiFetch("/api/v1/users/me/alerts", {
+    const res = await apiFetch(API + "/users/me/alerts", {
       method: "POST", body: JSON.stringify(body),
     });
     if (!res.ok) {
@@ -786,7 +802,7 @@ async function submitAlert(ev) {
 
 async function deleteAlert(id) {
   try {
-    const res = await apiFetch(`/api/v1/users/me/alerts/${id}`, { method: "DELETE" });
+    const res = await apiFetch(`${API}/users/me/alerts/${id}`, { method: "DELETE" });
     if (res.ok) refreshAlerts();
   } catch { /* handled */ }
 }

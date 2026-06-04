@@ -172,4 +172,4 @@ The interface IS the product, in a regulated industry. The model is a commodity.
 
 ---
 
-**BCSI ships the model + SHAP + real-time UI + multi-user infra as one open-source platform. github.com/<your-handle>/bcsi. MIT, self-hosted, no upsell. The `/api/v1/ml/predict/{ticker}` endpoint demoed above returns the JSON exactly as shown.**
+**BCSI ships the model + SHAP + real-time UI + multi-user infra as one open-source platform. github.com/Shekharpadhy/Stock-analysis. MIT, self-hosted, no upsell. The `/api/v1/ml/predict/{ticker}` endpoint demoed above returns the JSON exactly as shown.**
