@@ -21,7 +21,13 @@ class Settings(BaseSettings):
     sec_user_agent: str = "ResearchBot research@example.com"
     database_url: str = "sqlite:///./intelligence.db"
     redis_url: str = "redis://localhost:6379/0"
-    cache_ttl: int = 900   # 15 minutes — TTL for cached yfinance fundamentals
+    # Cache TTL for the yfinance fundamentals payload.  4 hours is the
+    # sweet spot — fundamentals don't change intra-day (quarterly reports
+    # land at known times), and a longer TTL dramatically reduces the
+    # number of Yahoo API hits, which dodges rate-limit windows.  After a
+    # ticker is analysed once, the next 4 hours of requests for it are
+    # served from Redis without touching Yahoo at all.
+    cache_ttl: int = 14400   # 4 hours
 
     # CORS — comma-separated allowlist (no "*" in production)
     cors_origins: str = "http://localhost:8765,http://localhost:3000"

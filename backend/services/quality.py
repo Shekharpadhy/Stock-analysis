@@ -150,12 +150,14 @@ def quality_from_statements(bs, inc, cf, raw: dict) -> dict:
 
 def compute_quality(ticker_obj, raw: dict) -> dict:
     """Read the statements off a yfinance Ticker and compute the quality score."""
+    # Same retry-wrapped yfinance access as ingestion + advanced_scores.
+    from backend.services.ingestion import _safe_yf
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            bs  = ticker_obj.balance_sheet
-            inc = ticker_obj.financials
-            cf  = ticker_obj.cashflow
+            bs  = _safe_yf(lambda: ticker_obj.balance_sheet)
+            inc = _safe_yf(lambda: ticker_obj.financials)
+            cf  = _safe_yf(lambda: ticker_obj.cashflow)
         return quality_from_statements(bs, inc, cf, raw)
     except Exception:
         return {

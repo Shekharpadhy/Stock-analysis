@@ -337,12 +337,16 @@ def compute_fcf_margin(inc, cf) -> Optional[float]:
 # ---------------------------------------------------------------------------
 
 def compute_all_advanced(ticker_obj) -> dict:
+    # Use the retry helper from ingestion.py so the same back-off
+    # behaviour applies here too — wraps yfinance properties so a transient
+    # Yahoo rate-limit becomes a graceful empty-frame instead of a crash.
+    from backend.services.ingestion import _safe_yf
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            bs  = ticker_obj.balance_sheet
-            inc = ticker_obj.financials
-            cf  = ticker_obj.cashflow
+            bs  = _safe_yf(lambda: ticker_obj.balance_sheet)
+            inc = _safe_yf(lambda: ticker_obj.financials)
+            cf  = _safe_yf(lambda: ticker_obj.cashflow)
 
         altman   = compute_altman(bs, inc)
         beneish  = compute_beneish(bs, inc, cf)

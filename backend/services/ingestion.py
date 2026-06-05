@@ -1,13 +1,50 @@
 import logging
+import time
 import yfinance as yf
 import requests
-from typing import Optional
+from typing import Any, Callable, Optional
 from backend.config import settings
 from backend.services.advanced_scores import compute_all_advanced
 from backend.services.quality import compute_quality
 from backend.services import cache
 
 log = logging.getLogger(__name__)
+
+
+# ── Retry helper ──────────────────────────────────────────────────────────────
+def _safe_yf(getter: Callable[[], Any],
+             attempts: int = 3,
+             base_delay: float = 0.5,
+             default: Any = None) -> Any:
+    """
+    Call a yfinance property/method with retry-on-transient-failure.
+
+    yfinance fails on cloud IPs in three distinct ways, all transient and
+    individually retryable:
+      • AttributeError when Yahoo returns a partial dict and yfinance's
+        internal .update() crashes.
+      • JSONDecodeError when Yahoo returns truncated HTML instead of JSON.
+      • ConnectionError on rate-limit responses (429).
+
+    Delay sequence: 0.5s, 1s, 2s (~3.5s worst case, well under the 30s
+    request timeout).  Returns `default` after persistent failure rather
+    than raising — every caller in this module already handles None.
+    """
+    last_exc = None
+    for attempt in range(attempts):
+        try:
+            result = getter()
+            if result is not None:
+                return result
+        except Exception as exc:                                  # noqa: BLE001
+            last_exc = exc
+            log.info("_safe_yf: attempt %d/%d raised %s",
+                     attempt + 1, attempts, type(exc).__name__)
+        if attempt < attempts - 1:
+            time.sleep(base_delay * (2 ** attempt))
+    if last_exc:
+        log.warning("_safe_yf: retries exhausted (%s)", type(last_exc).__name__)
+    return default
 
 
 SEC_BASE = "https://data.sec.gov"
@@ -29,43 +66,32 @@ def fetch_yahoo_fundamentals_full(ticker: str) -> tuple[dict, object]:
     """
     try:
         stock = yf.Ticker(ticker)
-        # yfinance's .info property occasionally crashes on its own with
-        # cryptic AttributeErrors when Yahoo returns a partial / rate-limited
-        # response.  Wrap the call so the user sees a useful message instead
-        # of "NoneType has no attribute 'update'".
-        try:
-            info = stock.info
-        except AttributeError:
-            info = None
-        except Exception as exc:                                  # noqa: BLE001
-            # yfinance can raise json.JSONDecodeError, ConnectionError, etc.
-            # Treat any of them as "couldn't fetch" — same downstream handling.
-            log.warning("ingestion(%s): stock.info raised %s", ticker, type(exc).__name__)
-            info = None
+
+        # Every yfinance attribute access goes through _safe_yf, which retries
+        # on the cloud-IP failure modes (rate-limit AttributeError, partial
+        # JSON, connection errors) with 0.5s / 1s / 2s back-off.  Returns None
+        # after persistent failure — handled below.
+        info = _safe_yf(lambda: stock.info)
 
         if not info or info.get("quoteType") is None:
-            # One more try via the lighter fast_info endpoint — sometimes one
-            # works when the other doesn't.  fast_info gives us price + name
-            # but not the financials, so we'd still 422 the analyse — but the
-            # error message is at least honest about WHY.
-            try:
-                fast = stock.fast_info
-                if fast and getattr(fast, "last_price", None):
-                    raise ValueError(
-                        f"Yahoo Finance is currently rate-limiting requests "
-                        f"for {ticker}.  Try again in a minute, or try a "
-                        f"different ticker."
-                    )
-            except (AttributeError, Exception):                   # noqa: BLE001
-                pass
+            # Probe fast_info as a secondary check — sometimes one Yahoo
+            # endpoint works while the other doesn't.  Used purely to
+            # distinguish "ticker bad" from "rate-limited" in the message.
+            fast = _safe_yf(lambda: stock.fast_info, attempts=1, default=None)
+            had_partial = bool(fast and getattr(fast, "last_price", None))
             raise ValueError(
+                f"Yahoo Finance is currently rate-limiting requests for "
+                f"{ticker}.  Try again in a minute."
+                if had_partial else
                 f"Could not fetch fundamentals for {ticker}.  Yahoo Finance "
                 f"may be temporarily rate-limiting our IP — wait ~60 seconds "
                 f"and try again, or try a different ticker."
             )
 
         # ── Revenue growth (YoY from income statement) ────────────
-        financials      = stock.financials
+        # _safe_yf returns None on persistent failure → the empty-frame check
+        # below handles that as "no revenue growth available".
+        financials      = _safe_yf(lambda: stock.financials)
         revenue_current = None
         revenue_prior   = None
         if financials is not None and not financials.empty:
