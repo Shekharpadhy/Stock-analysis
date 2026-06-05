@@ -76,8 +76,7 @@ self-hostable analyst dashboard. Costs a Hetzner VPS to run.
 Demo video (90s): <YOUTUBE_LINK>
 Repo: https://github.com/Shekharpadhy/Stock-analysis
 
-Built in close collaboration with Claude — every commit shows it. Happy to
-talk about that side of the work too. What would you change?
+What would you change?
 ```
 
 ---
@@ -100,7 +99,7 @@ talk about that side of the work too. What would you change?
 | Likely comment | Response angle |
 |---|---|
 | "Just another fintech dashboard" | Point at the comparison table. The ML+SHAP+governance combo is genuinely uncommon. |
-| "AI-generated slop" | Honest: written with Claude, every commit shows it, every line reviewed and tested. 443 tests + 80% coverage isn't slop. |
+| "AI-generated slop" | Point at the test suite (443 tests, 80% coverage, gated in CI) and a specific module reviewers can read end-to-end. The code earns trust by being readable and tested. |
 | "yfinance is unreliable" | Agreed — it's the rate-limited free tier. Architecturally a thin adapter; swap-in alternative documented in CONTRIBUTING. |
 | "Where's the moat?" | There isn't one and that's the point — MIT-licensed, self-hosted, no SaaS upsell. |
 | "Indian governance metrics?" | Genuine differentiator vs Bloomberg/Finviz — they don't track promoter pledge / SEBI enforcement. |

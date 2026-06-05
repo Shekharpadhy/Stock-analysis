@@ -93,20 +93,22 @@ It's not a notebook.
 
 ---
 
-## Tweet 6 (the build)
+## Tweet 6 (proof of polish)
 
 ```
-Built in close collaboration with @AnthropicAI's Claude — the commit
-history shows it explicitly.
+The fastest way to dismiss an open-source fintech project is
+"unmaintained side project."
 
-Every line reviewed + tested by a human. ~3 weeks of focused work for
-something that would have taken months solo.
+This one ships with:
+▸ a real test suite gated in CI
+▸ a multi-step DEPLOYMENT.md
+▸ a PRIVACY.md for data-subject requests
+▸ a SECURITY.md disclosure policy
 
-If you're allergic to AI-assisted code, fair. But it'd be dishonest to
-hide it.
+Production-shaped from day one.
 ```
 
-**Why**: Pre-empts the "AI slop" critique. Owning it converts more than hiding it.
+**Why**: Pre-empts the "looks abandoned" critique with concrete artifacts.
 
 ---
 

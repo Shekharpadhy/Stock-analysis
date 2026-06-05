@@ -49,9 +49,6 @@ that would make it useful to you.
 
 Code, demo video, and docs: <REPO_URL>
 
-(Built with Claude. Every commit shows it. Every line reviewed and
-tested by a human. Mentioning because honesty about the tools matters.)
-
 #OpenSource #Fintech #CreditRisk #Python #QuantitativeFinance
 ```
 

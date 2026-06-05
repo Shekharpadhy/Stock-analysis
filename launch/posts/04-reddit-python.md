@@ -86,14 +86,6 @@ wired a production FastAPI app end-to-end.
 - Demo video (90s): <DEMO_URL>
 - Live demo: <DEMO_SITE_URL>
 
-# Provenance disclosure
-
-Built in close collaboration with Claude (the AI assistant). The commit
-history shows it explicitly. Every line was reviewed and tested by a
-human — 443 tests + 80% coverage isn't faith-based engineering — but
-I'd rather be upfront than have it become a side-conversation in the
-thread. Happy to discuss the working pattern if anyone's curious.
-
 # Asks
 
 What would make this useful to YOUR Python work? Specifically interested

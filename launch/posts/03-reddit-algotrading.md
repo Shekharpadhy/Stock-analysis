@@ -94,12 +94,6 @@ Runs on a $7/mo Hetzner VPS.
 FastAPI + SQLAlchemy + Alembic + XGBoost + SHAP + APScheduler + Redis.
 Vanilla JS frontend (no build step).
 
-# Built with Claude
-
-The commit history shows it. Every line reviewed and tested by a human;
-nothing on faith. Mentioning here because I'd rather be honest about it
-than have it become a "gotcha" in the thread.
-
 # Asks
 
 1. What's the most useful feature I haven't built yet?

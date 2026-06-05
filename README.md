@@ -200,14 +200,6 @@ Detailed version history in [`CHANGELOG.md`](CHANGELOG.md).
 
 ---
 
-## A note on provenance
-
-This project was built in close collaboration with [Claude](https://claude.ai) — the commit history shows it explicitly. Every line was reviewed and tested by a human; nothing was merged on faith. If you're allergic to AI-assisted code, that's fine, but it'd be dishonest to hide it.
-
-The result: more breadth in the same wall-clock time, the same care per module, and a paper trail of design decisions any reviewer can follow.
-
----
-
 ## Contributing
 
 Pull requests welcome. The bar:
