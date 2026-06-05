@@ -51,11 +51,16 @@ from backend.services import audit
 from backend.services import user_tokens
 from backend.services import email_delivery
 from backend.services.metrics import REGISTRY as METRICS
+from backend.services import ticker_lookup
 
 router = APIRouter()
 log = logging.getLogger(__name__)
 
-_TICKER_RE = re.compile(r"^[A-Z0-9.\-]{1,15}$")
+# Ticker character class — covers US tickers (AAPL, BRK.B, BRK-B), NSE India
+# (M&M.NS, RELIANCE.NS), BSE India (.BO suffix), London (.L), Hong Kong (4-digit
+# codes).  `&` is in here for Mahindra & Mahindra and the handful of other
+# ampersand names on NSE.  Cap at 20 chars so ".NS" suffixes fit comfortably.
+_TICKER_RE = re.compile(r"^[A-Z0-9.\-&]{1,20}$")
 
 
 def _validate_ticker(ticker: str) -> str:
@@ -85,6 +90,21 @@ def login(
         "access_token": create_access_token(form_data.username),
         "token_type": "bearer",
     }
+
+
+# ── Ticker name → symbol lookup (autocomplete) ────────────────────────────────
+@router.get("/lookup")
+def lookup_tickers(q: str = "", limit: int = 8):
+    """
+    Return ranked ticker candidates for a free-form name or symbol query.
+
+    Drives the search-box autocomplete in the dashboard so users can type
+    "Apple" and pick AAPL from a dropdown.  Results are limited to equities
+    and ETFs (not futures, indices, currencies) to keep the dropdown
+    signal-dense.  Network / Yahoo-API failures degrade to an empty list.
+    """
+    limit = max(1, min(20, limit))
+    return ticker_lookup.search_tickers(q, max_results=limit)
 
 
 # ── List / filter ─────────────────────────────────────────────────────────────
@@ -124,15 +144,30 @@ def get_company(ticker: str, db: Session = Depends(get_db)):
 async def analyze_company(request: Request, ticker: str, db: Session = Depends(get_db)):
     """
     Runs the complete analysis pipeline for a ticker:
-      1. Fetch fundamentals + advanced scores (yfinance, Redis-cached 15 min,
+      1. Resolve free-form names to a ticker symbol if needed (so users can
+         pass "Apple" instead of "AAPL")
+      2. Fetch fundamentals + advanced scores (yfinance, Redis-cached 15 min,
          run in a thread to avoid blocking the event loop)
-      2. GICS sector classification
-      3. Ensemble risk score (85 % accuracy target)
-      4. Valuation: Monte Carlo DCF → Bear / Base / Bull / Stretched targets
-      5. Entry zone, trim level, hard stop
-      6. Persist to database
+      3. GICS sector classification
+      4. Ensemble risk score (85 % accuracy target)
+      5. Valuation: Monte Carlo DCF → Bear / Base / Bull / Stretched targets
+      6. Entry zone, trim level, hard stop
+      7. Persist to database
     """
-    t = _validate_ticker(ticker)
+    # Free-form name resolution: if the input doesn't pass the strict ticker
+    # regex but matches a company name in Yahoo's search, swap it in.  This
+    # lets the dashboard accept "Apple", "JP Morgan", etc.
+    try:
+        t = _validate_ticker(ticker)
+    except HTTPException:
+        resolved = await asyncio.to_thread(ticker_lookup.resolve_to_ticker, ticker)
+        if resolved is None:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Couldn't find a ticker matching {ticker!r}. "
+                       "Try the symbol directly (e.g. AAPL).",
+            )
+        t = _validate_ticker(resolved)
 
     try:
         # Combined fundamentals + advanced scores + quality, cached in Redis 15 min.

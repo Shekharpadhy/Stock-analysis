@@ -104,6 +104,7 @@ def test_app_js_exposes_handler_on_window(app_js, handler):
     "/users/me",
     "/users/me/portfolio",
     "/users/me/alerts",
+    "/lookup",                  # ticker name → symbol autocomplete
 ])
 def test_app_js_calls_expected_backend_path(app_js, suffix):
     """If a route is renamed on the backend, the matching JS call breaks."""

@@ -505,6 +505,53 @@ tbody tr:hover { background: rgba(255,255,255,0.03); }
 
 .hidden { display: none !important; }
 
+/* ── Ticker autocomplete dropdown ────────────────────────────────────────── */
+.search-bar { position: relative; }
+.autocomplete-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 90px;                /* leave room for the Analyze button */
+  max-height: 320px;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  z-index: 150;
+}
+.ac-row {
+  display: grid;
+  grid-template-columns: 70px 1fr auto;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+  transition: background 0.1s;
+}
+.ac-row:last-child { border-bottom: none; }
+.ac-row:hover, .ac-row.ac-active {
+  background: rgba(31,111,235,0.12);
+}
+.ac-ticker {
+  font-family: monospace;
+  font-weight: 700;
+  color: var(--accent);
+}
+.ac-name {
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ac-meta {
+  color: var(--muted);
+  font-size: 11px;
+  font-family: monospace;
+}
+
 /* ── User widget + auth menu ─────────────────────────────────────────────── */
 .user-widget { position: relative; }
 .user-btn {
