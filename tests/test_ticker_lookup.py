@@ -84,9 +84,36 @@ def test_search_respects_max_results():
 
 
 def test_search_swallows_network_errors():
-    """A broken yfinance call yields [], never an exception."""
+    """A broken yfinance call yields [] when no curated match either —
+    never an exception.  Uses a name not in the curated dictionary so we
+    actually exercise the yfinance path."""
     with patch("yfinance.Search", side_effect=RuntimeError("network down")):
-        assert ticker_lookup.search_tickers("Apple") == []
+        assert ticker_lookup.search_tickers("zzzz unknownco") == []
+
+
+def test_curated_dictionary_works_when_yfinance_is_down():
+    """The whole point of the curated layer — Apple still resolves even
+    when Yahoo's API is unavailable."""
+    with patch("yfinance.Search", side_effect=RuntimeError("network down")):
+        out = ticker_lookup.search_tickers("Apple")
+    tickers = [r["ticker"] for r in out]
+    assert "AAPL" in tickers
+
+
+def test_curated_dictionary_resolves_indian_names():
+    """The autocomplete must work for NSE names even when yfinance is
+    rate-limiting cloud IPs — that's the production case."""
+    with patch("yfinance.Search", side_effect=RuntimeError("rate limited")):
+        for query, expected_ticker in [
+            ("Mahindra",      "M&M.NS"),
+            ("Reliance",      "RELIANCE.NS"),
+            ("Tata Motors",   "TATAMOTORS.NS"),
+            ("Infosys",       "INFY.NS"),
+        ]:
+            out = ticker_lookup.search_tickers(query)
+            tickers = [r["ticker"] for r in out]
+            assert expected_ticker in tickers, \
+                f"query {query!r} should surface {expected_ticker}, got {tickers}"
 
 
 def test_search_falls_back_for_ticker_when_yahoo_misses():
