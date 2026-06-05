@@ -40,7 +40,12 @@ class Settings(BaseSettings):
     rate_limit_enabled: bool = True
 
     # Public-facing base URL used to build verify / reset email links.
-    # Must include scheme + host (no trailing slash).
+    # Must include scheme + host (no trailing slash).  Render auto-injects
+    # RENDER_EXTERNAL_URL at runtime; the resolved_public_base_url helper
+    # below transparently prefers PUBLIC_BASE_URL when set, then falls back
+    # to RENDER_EXTERNAL_URL, then to the localhost default.  This lets the
+    # Render blueprint stay schema-clean (no fromService.envVarKey conflict)
+    # while still producing correct email links on the very first boot.
     public_base_url: str = "http://localhost:8000"
 
     # Lifetimes (in hours) for account-lifecycle tokens.
@@ -83,6 +88,26 @@ class Settings(BaseSettings):
     # `text` for dev, `json` for prod log-shippers (Datadog, Loki, ES, ...)
     log_format: str = "text"
     log_level:  str = "INFO"
+
+    # ── Derived accessors ─────────────────────────────────────────────────────
+
+    def resolved_public_base_url(self) -> str:
+        """
+        Return the URL we should embed in outgoing emails.
+
+        Resolution order:
+            1. PUBLIC_BASE_URL — explicitly set by the operator (always wins)
+            2. RENDER_EXTERNAL_URL — Render auto-injects this; on first deploy
+               PUBLIC_BASE_URL is usually unset, so this is the natural fallback
+            3. The localhost default — last resort for dev / docker-compose
+        """
+        import os
+        if self.public_base_url and self.public_base_url != "http://localhost:8000":
+            return self.public_base_url.rstrip("/")
+        render_url = os.environ.get("RENDER_EXTERNAL_URL", "").strip()
+        if render_url:
+            return render_url.rstrip("/")
+        return self.public_base_url.rstrip("/")
 
     # ── Validation hooks ──────────────────────────────────────────────────────
 

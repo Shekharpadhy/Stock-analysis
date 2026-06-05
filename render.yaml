@@ -54,13 +54,16 @@ services:
           type: redis
           name: bcsi-redis
           property: connectionString
-      # The public base URL is auto-set to the bcsi-web service's URL
+      # PUBLIC_BASE_URL — used to build email verification + password-reset
+      # links.  Render's blueprint schema doesn't let one envVar both read a
+      # `property` AND fall back to an `envVarKey` on the same service, so we
+      # leave this as a manual var the operator sets in the Render dashboard
+      # after the first deploy (when the actual onrender.com URL is known).
+      # Sane fallback inside the app: $RENDER_EXTERNAL_URL is auto-injected
+      # by Render at runtime; backend.config reads it as a secondary source
+      # if PUBLIC_BASE_URL is unset.
       - key: PUBLIC_BASE_URL
-        fromService:
-          type: web
-          name: bcsi-web
-          property: host
-          envVarKey: RENDER_EXTERNAL_URL    # falls back to host if not set
+        sync: false
       # Reasonable production defaults
       - key: SCHEDULER_ENABLED
         value: "true"

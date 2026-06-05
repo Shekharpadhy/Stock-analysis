@@ -1022,7 +1022,7 @@ def register_user(
             db, user.id, purpose="email_verify",
             ttl_hours=settings.email_verification_ttl_hours,
         )
-        link  = f"{settings.public_base_url.rstrip('/')}/api/v1/auth/verify?token={token}"
+        link  = f"{settings.resolved_public_base_url()}/api/v1/auth/verify?token={token}"
         email_delivery.send_verification_email(user.email, link)
     except Exception as exc:                              # noqa: BLE001
         log.warning("register(%s): verification email send failed — %s",
@@ -1131,7 +1131,7 @@ def resend_verification(
             db, user.id, purpose="email_verify",
             ttl_hours=settings.email_verification_ttl_hours,
         )
-        link  = f"{settings.public_base_url.rstrip('/')}/api/v1/auth/verify?token={token}"
+        link  = f"{settings.resolved_public_base_url()}/api/v1/auth/verify?token={token}"
         email_delivery.send_verification_email(user.email, link)
         audit.record(db, actor=user.username, action="auth.verify_resend",
                      target=str(user.id))
@@ -1160,7 +1160,7 @@ def password_reset_request(
             db, user.id, purpose="password_reset",
             ttl_hours=settings.password_reset_ttl_hours,
         )
-        link  = (f"{settings.public_base_url.rstrip('/')}"
+        link  = (f"{settings.resolved_public_base_url()}"
                  f"/api/v1/auth/password-reset/confirm?token={token}")
         email_delivery.send_password_reset_email(user.email, link)
         audit.record(db, actor=user.username, action="auth.password_reset_request",
