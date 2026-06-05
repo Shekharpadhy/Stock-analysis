@@ -499,6 +499,12 @@ function initPriceStream() {
   _ws.onopen = () => {
     _wsReconnect = WS_RECONNECT_BASE;   // reset back-off on success
     _resetSilenceTimer();
+    // Flip to "live" as soon as the socket opens — don't wait for the first
+    // price message.  On a fresh deploy with no companies in the DB yet the
+    // snapshot is empty and the indicator would otherwise stay "connecting…"
+    // forever.  Once price_snapshot / price_update messages arrive, the
+    // status may upgrade to "delayed" if the data is rate-limited.
+    _setLiveStatus("live");
     console.info("ws:prices  connected");
   };
 
@@ -520,17 +526,21 @@ function initPriceStream() {
 }
 
 /* ── analyze action ───────────────────────────────────────────────────────── */
-async function analyzeCompany() {
-  const input  = $("tickerInput");
-  const ticker = input.value.trim().toUpperCase();
-  if (!ticker) {
-    toast("Enter a ticker symbol first.", "error");
+async function analyzeCompany(forcedTicker) {
+  const input = $("tickerInput");
+  // Accept either an explicit ticker (from autocomplete) or whatever the user
+  // typed.  The backend resolves names → tickers via /lookup, so we send the
+  // raw query (no uppercasing — "Apple" stays "Apple" so name search works).
+  const query = (forcedTicker ?? input.value).trim();
+  if (!query) {
+    toast("Enter a ticker symbol or company name.", "error");
     return;
   }
+  closeAutocomplete();
   showLoader(true);
   try {
     const company = await api(
-      `/companies/analyze?ticker=${encodeURIComponent(ticker)}`,
+      `/companies/analyze?ticker=${encodeURIComponent(query)}`,
       { method: "POST" }
     );
     const lbl = company.bcsi_label ?? company.risk_label ?? "analyzed";
@@ -546,11 +556,131 @@ async function analyzeCompany() {
   }
 }
 
+/* ── Autocomplete: type a name, pick a ticker ─────────────────────────────── */
+
+let _autocompleteTimer = null;
+let _autocompleteController = null;     // for aborting in-flight lookups
+let _autocompleteIndex = -1;            // keyboard selection cursor
+let _autocompleteResults = [];
+
+function _ensureAutocompleteDiv() {
+  let dd = $("autocompleteDropdown");
+  if (dd) return dd;
+  dd = document.createElement("div");
+  dd.id = "autocompleteDropdown";
+  dd.className = "autocomplete-dropdown hidden";
+  const searchBar = $("tickerInput").closest(".search-bar");
+  searchBar.appendChild(dd);
+  return dd;
+}
+
+function closeAutocomplete() {
+  const dd = $("autocompleteDropdown");
+  if (dd) dd.classList.add("hidden");
+  _autocompleteIndex = -1;
+}
+
+function renderAutocomplete(results) {
+  const dd = _ensureAutocompleteDiv();
+  _autocompleteResults = results || [];
+  if (!_autocompleteResults.length) {
+    dd.classList.add("hidden");
+    return;
+  }
+  dd.innerHTML = _autocompleteResults
+    .map((r, i) => `
+      <div class="ac-row" data-idx="${i}" data-ticker="${r.ticker}">
+        <span class="ac-ticker">${r.ticker}</span>
+        <span class="ac-name">${(r.name || "").replace(/[<>]/g, "")}</span>
+        <span class="ac-meta">${r.exchange || r.type || ""}</span>
+      </div>`)
+    .join("");
+  dd.classList.remove("hidden");
+  // Click → analyse that ticker.
+  dd.querySelectorAll(".ac-row").forEach((row) => {
+    row.addEventListener("mousedown", (e) => {
+      e.preventDefault();      // don't blur the input before we read it
+      const ticker = row.dataset.ticker;
+      $("tickerInput").value = ticker;
+      analyzeCompany(ticker);
+    });
+  });
+}
+
+async function fetchAutocomplete(query) {
+  if (_autocompleteController) _autocompleteController.abort();
+  _autocompleteController = new AbortController();
+  try {
+    const res = await fetch(
+      `${API}/lookup?q=${encodeURIComponent(query)}&limit=8`,
+      { signal: _autocompleteController.signal },
+    );
+    if (!res.ok) return;
+    const results = await res.json();
+    // Only render if the input still matches what we asked for
+    if ($("tickerInput").value.trim() === query) {
+      renderAutocomplete(results);
+    }
+  } catch (e) {
+    if (e.name !== "AbortError") {
+      // network blip — just close the dropdown, don't surface noise
+      closeAutocomplete();
+    }
+  }
+}
+
+function onTickerInput(e) {
+  const query = e.target.value.trim();
+  clearTimeout(_autocompleteTimer);
+  if (query.length < 2) {
+    closeAutocomplete();
+    return;
+  }
+  // Debounce — 200 ms is the sweet spot between feeling instant and not
+  // hammering Yahoo's search endpoint on every keystroke.
+  _autocompleteTimer = setTimeout(() => fetchAutocomplete(query), 200);
+}
+
+function onTickerKeydown(e) {
+  const dd = $("autocompleteDropdown");
+  const open = dd && !dd.classList.contains("hidden");
+
+  if (e.key === "Enter") {
+    if (open && _autocompleteIndex >= 0) {
+      const pick = _autocompleteResults[_autocompleteIndex];
+      $("tickerInput").value = pick.ticker;
+      analyzeCompany(pick.ticker);
+    } else {
+      analyzeCompany();
+    }
+    return;
+  }
+  if (!open) return;
+  if (e.key === "ArrowDown") {
+    e.preventDefault();
+    _autocompleteIndex = Math.min(_autocompleteIndex + 1, _autocompleteResults.length - 1);
+    _highlightAutocomplete();
+  } else if (e.key === "ArrowUp") {
+    e.preventDefault();
+    _autocompleteIndex = Math.max(_autocompleteIndex - 1, -1);
+    _highlightAutocomplete();
+  } else if (e.key === "Escape") {
+    closeAutocomplete();
+  }
+}
+
+function _highlightAutocomplete() {
+  document.querySelectorAll(".ac-row").forEach((row, i) => {
+    row.classList.toggle("ac-active", i === _autocompleteIndex);
+  });
+}
+
 /* ── init ─────────────────────────────────────────────────────────────────── */
 function init() {
-  $("tickerInput").addEventListener("keydown", (e) => {
-    if (e.key === "Enter") analyzeCompany();
-  });
+  const input = $("tickerInput");
+  input.addEventListener("keydown", onTickerKeydown);
+  input.addEventListener("input",   onTickerInput);
+  input.addEventListener("blur",    () => setTimeout(closeAutocomplete, 150));
   loadCompanies();
   loadSectorChart();
   initPriceStream();
