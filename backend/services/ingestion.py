@@ -1,3 +1,4 @@
+import logging
 import yfinance as yf
 import requests
 from typing import Optional
@@ -5,6 +6,8 @@ from backend.config import settings
 from backend.services.advanced_scores import compute_all_advanced
 from backend.services.quality import compute_quality
 from backend.services import cache
+
+log = logging.getLogger(__name__)
 
 
 SEC_BASE = "https://data.sec.gov"
@@ -26,10 +29,40 @@ def fetch_yahoo_fundamentals_full(ticker: str) -> tuple[dict, object]:
     """
     try:
         stock = yf.Ticker(ticker)
-        info  = stock.info
+        # yfinance's .info property occasionally crashes on its own with
+        # cryptic AttributeErrors when Yahoo returns a partial / rate-limited
+        # response.  Wrap the call so the user sees a useful message instead
+        # of "NoneType has no attribute 'update'".
+        try:
+            info = stock.info
+        except AttributeError:
+            info = None
+        except Exception as exc:                                  # noqa: BLE001
+            # yfinance can raise json.JSONDecodeError, ConnectionError, etc.
+            # Treat any of them as "couldn't fetch" — same downstream handling.
+            log.warning("ingestion(%s): stock.info raised %s", ticker, type(exc).__name__)
+            info = None
 
         if not info or info.get("quoteType") is None:
-            raise ValueError(f"No data returned for {ticker}. Check the ticker symbol.")
+            # One more try via the lighter fast_info endpoint — sometimes one
+            # works when the other doesn't.  fast_info gives us price + name
+            # but not the financials, so we'd still 422 the analyse — but the
+            # error message is at least honest about WHY.
+            try:
+                fast = stock.fast_info
+                if fast and getattr(fast, "last_price", None):
+                    raise ValueError(
+                        f"Yahoo Finance is currently rate-limiting requests "
+                        f"for {ticker}.  Try again in a minute, or try a "
+                        f"different ticker."
+                    )
+            except (AttributeError, Exception):                   # noqa: BLE001
+                pass
+            raise ValueError(
+                f"Could not fetch fundamentals for {ticker}.  Yahoo Finance "
+                f"may be temporarily rate-limiting our IP — wait ~60 seconds "
+                f"and try again, or try a different ticker."
+            )
 
         # ── Revenue growth (YoY from income statement) ────────────
         financials      = stock.financials
