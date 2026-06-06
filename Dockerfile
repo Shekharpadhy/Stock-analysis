@@ -21,7 +21,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Cache-bust marker.  Bump this string whenever a backend-only change isn't
 # picked up by the COPY-layer cache.  Putting it BEFORE the COPY ensures the
 # subsequent layers are rebuilt.  Current value: 2026-06-05-retry-v2
-ARG CACHE_BUSTER=2026-06-05-retry-v2
+ARG CACHE_BUSTER=2026-06-05-curl-cffi-v3
 RUN echo "build at $CACHE_BUSTER" > /tmp/.cache-buster
 
 # Application code.

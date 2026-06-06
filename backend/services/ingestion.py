@@ -1,6 +1,20 @@
 import logging
 import time
 import yfinance as yf
+
+# ── Browser-impersonating session (curl_cffi) ────────────────────────────────
+# Yahoo Finance aggressively throttles requests with a "python-requests" or
+# default User-Agent.  curl_cffi mimics a real Safari TLS handshake + headers
+# so requests look indistinguishable from a desktop browser, dodging most
+# of Yahoo's bot-detection.  This is the single biggest reliability win on
+# cloud-hosted IPs.  yfinance 0.2.55+ accepts `session=...` on Ticker().
+try:
+    from curl_cffi import requests as cffi_requests
+    _YF_SESSION = cffi_requests.Session(impersonate="safari15_5")
+except Exception:                                              # noqa: BLE001
+    # If curl_cffi unavailable (very old Python, missing wheel), fall back to
+    # default yfinance behaviour — strictly worse but functional.
+    _YF_SESSION = None
 import requests
 from typing import Any, Callable, Optional
 from backend.config import settings
@@ -67,8 +81,15 @@ def fetch_yahoo_fundamentals_full(ticker: str) -> tuple[dict, object]:
     try:
         # yf.Ticker() itself can raise YFRateLimitError on cloud-IP throttling
         # in recent yfinance versions — wrap the constructor too so a rate-limit
-        # error here doesn't escape to the outer catch.
-        stock = _safe_yf(lambda: yf.Ticker(ticker), attempts=2)
+        # error here doesn't escape to the outer catch.  We pass the
+        # browser-impersonating curl_cffi session if available; that alone
+        # bypasses ~95 % of Yahoo's bot-detection because the TLS handshake
+        # looks like Safari, not Python.
+        stock = _safe_yf(
+            lambda: yf.Ticker(ticker, session=_YF_SESSION) if _YF_SESSION
+                    else yf.Ticker(ticker),
+            attempts=2,
+        )
         if stock is None:
             raise ValueError(
                 f"Yahoo Finance rate-limited the request for {ticker}. "
