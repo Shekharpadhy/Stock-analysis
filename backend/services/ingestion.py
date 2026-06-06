@@ -233,20 +233,72 @@ def fetch_company_data(ticker: str) -> tuple[dict, dict, dict]:
     entries do not poison a new schema.
     """
     ticker = ticker.upper()
-    key = f"yfc:v2:{ticker}"
+    # Bump the cache key when the data source shape changes so old yfinance-
+    # only cache entries don't poison the new FMP-first pipeline.
+    key = f"yfc:v3:{ticker}"
 
     cached = cache.cache_get(key)
     if cached is not None:
         return cached["raw"], cached["advanced"], cached["quality"]
 
-    raw, ticker_obj = fetch_yahoo_fundamentals_full(ticker)
-    advanced = compute_all_advanced(ticker_obj)
-    quality  = compute_quality(ticker_obj, raw)
+    # ── PRIMARY: Financial Modeling Prep ─────────────────────────────────────
+    # Reliable, sane rate limits, covers US + NSE/BSE.  Only the analyst /
+    # forward-PE fields are missing on the free tier — everything else lands.
+    from backend.services import fmp_adapter
+
+    raw: Optional[dict] = None
+    ticker_obj          = None  # FMP doesn't give us a yfinance Ticker
+
+    if fmp_adapter.is_configured():
+        fmp_result = fmp_adapter.fetch_fundamentals(ticker)
+        if fmp_result is not None:
+            raw, _fmp_payloads = fmp_result
+            log.info("ingestion(%s): primary fetch succeeded via FMP", ticker)
+
+    # ── FALLBACK: yfinance (only if FMP isn't configured or returned None) ──
+    if raw is None:
+        log.info("ingestion(%s): falling back to yfinance", ticker)
+        raw, ticker_obj = fetch_yahoo_fundamentals_full(ticker)
+
+    # Advanced + quality scoring engines currently consume a yfinance Ticker
+    # object directly.  When we came in via FMP we don't have one, so those
+    # branches yield "Unavailable" sentinels — graceful degradation.  A
+    # follow-up commit can teach them to read FMP statement payloads too.
+    advanced = compute_all_advanced(ticker_obj) if ticker_obj is not None \
+               else _unavailable_advanced()
+    quality  = compute_quality(ticker_obj, raw) if ticker_obj is not None \
+               else _unavailable_quality()
+
     cache.cache_set(
         key, {"raw": raw, "advanced": advanced, "quality": quality},
         settings.cache_ttl,
     )
     return raw, advanced, quality
+
+
+def _unavailable_advanced() -> dict:
+    """Sentinel returned when we fetched via FMP and have no yfinance Ticker
+    to feed into the advanced-score engine.  Mirrors compute_all_advanced's
+    own fallback shape."""
+    return {
+        "altman":     {"z_score": None, "zone": "Unavailable"},
+        "beneish":    {"m_score": None, "flag": "Unavailable"},
+        "icr":        None,
+        "icr_label":  "Unavailable",
+        "fcf_margin": None,
+    }
+
+
+def _unavailable_quality() -> dict:
+    """Sentinel returned when we fetched via FMP and have no yfinance Ticker
+    for the quality engine to read."""
+    return {
+        "quality_score": None, "quality_label": "Unknown",
+        "piotroski": {"f_score": 0, "max": 9, "criteria": {}},
+        "graham_number": None,
+        "magic_formula": {"earnings_yield_pct": None,
+                          "return_on_capital_pct": None},
+    }
 
 
 # ── SEC EDGAR ─────────────────────────────────────────────────────────────────

@@ -19,6 +19,12 @@ class Settings(BaseSettings):
     app_env: str = "development"
     app_port: int = 8000
     sec_user_agent: str = "ResearchBot research@example.com"
+
+    # Financial Modeling Prep — primary fundamentals source.  Free tier is
+    # 250 requests/day, covers US + NSE/BSE India fully.  When unset, the
+    # app falls back to yfinance (less reliable on cloud IPs).  Set via
+    # the FMP_API_KEY env var in production.
+    fmp_api_key: str = ""
     database_url: str = "sqlite:///./intelligence.db"
     redis_url: str = "redis://localhost:6379/0"
     # Cache TTL for the yfinance fundamentals payload.  4 hours is the
