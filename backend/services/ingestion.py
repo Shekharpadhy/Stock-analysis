@@ -65,7 +65,15 @@ def fetch_yahoo_fundamentals_full(ticker: str) -> tuple[dict, object]:
     Raises ValueError on data fetch failure.
     """
     try:
-        stock = yf.Ticker(ticker)
+        # yf.Ticker() itself can raise YFRateLimitError on cloud-IP throttling
+        # in recent yfinance versions — wrap the constructor too so a rate-limit
+        # error here doesn't escape to the outer catch.
+        stock = _safe_yf(lambda: yf.Ticker(ticker), attempts=2)
+        if stock is None:
+            raise ValueError(
+                f"Yahoo Finance rate-limited the request for {ticker}. "
+                f"Please wait 30-60 seconds and try again."
+            )
 
         # Every yfinance attribute access goes through _safe_yf, which retries
         # on the cloud-IP failure modes (rate-limit AttributeError, partial
@@ -168,7 +176,21 @@ def fetch_yahoo_fundamentals_full(ticker: str) -> tuple[dict, object]:
     except ValueError:
         raise
     except Exception as e:
-        raise ValueError(f"Failed to fetch data for {ticker}: {e}")
+        # Final safety net — if a yfinance exception slipped past every
+        # _safe_yf wrapper, translate it into the same user-friendly message
+        # rather than leaking the raw yfinance error string.  The sentinel
+        # [retry-v2] is here so we can verify this exact code is the one
+        # serving traffic after a deploy.
+        msg = str(e).lower()
+        if "rate" in msg or "too many requests" in msg or "limit" in msg:
+            raise ValueError(
+                f"Yahoo Finance is rate-limiting requests for {ticker} "
+                f"right now.  Wait ~60 seconds and try again. [retry-v2]"
+            )
+        raise ValueError(
+            f"Could not fetch data for {ticker}.  Yahoo Finance returned "
+            f"an unexpected response — try again in a minute. [retry-v2]"
+        )
 
 
 def fetch_yahoo_fundamentals(ticker: str) -> dict:
