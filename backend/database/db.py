@@ -417,6 +417,27 @@ class ShowcaseSnapshot(Base):
     refreshed_at  = Column(DateTime, nullable=False, default=datetime.utcnow)
 
 
+class PendingSnapshot(Base):
+    """Queue of tickers users searched that didn't have a snapshot yet.
+
+    When the /analyze endpoint encounters a non-showcase ticker AND the live
+    fetch returns sparse data, it inserts the ticker here.  The nightly
+    refresh job drains the queue — every queued ticker gets a snapshot on the
+    next run.  So a user who searches a new ticker today sees blanks today
+    but full data tomorrow (and so does every subsequent visitor).
+
+    Tracking request_count lets us prioritise hot tickers when the FMP free
+    tier is tight, and gives basic analytics on what reviewers actually type.
+    """
+    __tablename__ = "pending_snapshots"
+
+    ticker             = Column(String, primary_key=True)
+    first_requested_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    last_requested_at  = Column(DateTime, nullable=False, default=datetime.utcnow,
+                                onupdate=datetime.utcnow)
+    request_count      = Column(Integer, nullable=False, default=1)
+
+
 class AuditLog(Base):
     """
     Append-only record of privileged actions.

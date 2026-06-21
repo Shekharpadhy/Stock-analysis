@@ -67,13 +67,22 @@ def main(argv: list[str] | None = None) -> int:
                     (results["refreshed"] if ok else results["skipped"]).append(t)
                 except Exception as exc:                          # noqa: BLE001
                     results["failed"].append({"ticker": t, "error": str(exc)})
+            # No-args mode is the only one that drains the queue; explicit
+            # ticker arg means "refresh just these, leave the queue alone".
+            pending_results = None
         else:
             results = showcase.refresh_all(db)
+            log.info("draining pending-snapshot queue (user-requested tickers)")
+            pending_results = showcase.drain_pending(db)
     finally:
         db.close()
 
-    print(json.dumps(results, indent=2, default=str))
-    return 0 if not results.get("failed") else 1
+    output = {"showcase": results}
+    if pending_results is not None:
+        output["pending"] = pending_results
+    print(json.dumps(output, indent=2, default=str))
+    failed = results.get("failed") or (pending_results or {}).get("failed")
+    return 0 if not failed else 1
 
 
 if __name__ == "__main__":

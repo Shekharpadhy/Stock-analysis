@@ -37,21 +37,39 @@ from typing import Optional, Tuple
 
 from sqlalchemy.orm import Session
 
-from backend.database.db import ShowcaseSnapshot
+from backend.database.db import PendingSnapshot, ShowcaseSnapshot
 
 log = logging.getLogger(__name__)
 
-# Curated tickers — the demo's "always-populated" set.  Keep <= 20 to stay
-# well under FMP's 250/day free-tier cap when the refresh job runs
-# (~6 endpoints per ticker × 20 tickers = 120 calls per refresh).
+# Curated tickers — always-refreshed nightly so the demo dashboard always
+# renders complete data for the tickers a portfolio reviewer is most likely
+# to type.  Sized around 100; the nightly GitHub Action refreshes the full
+# list using yfinance (FMP free tier caps at 250/day which doesn't cover
+# ~6 endpoints × 100 tickers = 600 calls).
 SHOWCASE_TICKERS = [
-    # US mega-caps
-    "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA",
-    # India mega-caps + banking + IT
-    "RELIANCE.NS", "TCS.NS", "INFY.NS", "HDFCBANK.NS", "ICICIBANK.NS",
-    "BAJFINANCE.NS", "M&M.NS", "LT.NS",
-    # ETFs / index proxies
-    "SPY", "QQQ",
+    # ── US mega-caps & top S&P 500 (~50) ─────────────────────────────────
+    "AAPL", "MSFT", "GOOGL", "GOOG", "AMZN", "NVDA", "META", "TSLA",
+    "BRK-B", "JPM", "V", "UNH", "JNJ", "WMT", "MA", "PG", "XOM", "HD",
+    "CVX", "ABBV", "LLY", "MRK", "AVGO", "PEP", "KO", "COST", "BAC",
+    "WFC", "TMO", "ORCL", "MCD", "DIS", "CSCO", "ABT", "ADBE", "NFLX",
+    "ACN", "AMD", "CRM", "LIN", "NKE", "TXN", "PM", "INTC", "VZ",
+    "CMCSA", "NEE", "INTU", "T", "IBM",
+
+    # ── India Nifty 50 ───────────────────────────────────────────────────
+    "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "ICICIBANK.NS", "INFY.NS",
+    "ITC.NS", "HINDUNILVR.NS", "SBIN.NS", "BHARTIARTL.NS", "KOTAKBANK.NS",
+    "LT.NS", "AXISBANK.NS", "ASIANPAINT.NS", "BAJFINANCE.NS", "MARUTI.NS",
+    "M&M.NS", "HCLTECH.NS", "SUNPHARMA.NS", "TITAN.NS", "ULTRACEMCO.NS",
+    "NESTLEIND.NS", "WIPRO.NS", "NTPC.NS", "TATAMOTORS.NS", "POWERGRID.NS",
+    "TECHM.NS", "ONGC.NS", "BAJAJFINSV.NS", "DRREDDY.NS", "ADANIENT.NS",
+    "JSWSTEEL.NS", "TATASTEEL.NS", "COALINDIA.NS", "GRASIM.NS",
+    "INDUSINDBK.NS", "BPCL.NS", "CIPLA.NS", "EICHERMOT.NS", "BRITANNIA.NS",
+    "HEROMOTOCO.NS", "DIVISLAB.NS", "HINDALCO.NS", "APOLLOHOSP.NS",
+    "BAJAJ-AUTO.NS", "UPL.NS", "ADANIPORTS.NS", "SBILIFE.NS", "HDFCLIFE.NS",
+    "TATACONSUM.NS", "LTIM.NS",
+
+    # ── ETFs / index proxies ─────────────────────────────────────────────
+    "SPY", "QQQ", "VOO", "VTI", "IVV", "DIA", "IWM",
 ]
 
 
@@ -145,5 +163,65 @@ def refresh_all(db: Session) -> dict:
             (summary["refreshed"] if ok else summary["skipped"]).append(t)
         except Exception as exc:                                  # noqa: BLE001
             log.exception("showcase: unexpected error on %s", t)
+            summary["failed"].append({"ticker": t, "error": str(exc)})
+    return summary
+
+
+# ── Pending queue (user-requested tickers that need a snapshot) ──────────────
+
+def enqueue_snapshot(db: Session, ticker: str) -> None:
+    """Insert ticker into the pending queue (or bump request_count if it's
+    already there).  Called from the analyze endpoint when a user searches
+    a non-showcase ticker that returned sparse live data — the nightly
+    refresh job will pick it up.
+
+    Best-effort: any DB error is logged and swallowed so a queue failure
+    doesn't break the analyze response the user is waiting on.
+    """
+    ticker_u = ticker.upper()
+    try:
+        row = db.query(PendingSnapshot).filter_by(ticker=ticker_u).first()
+        if row is None:
+            row = PendingSnapshot(ticker=ticker_u, request_count=1)
+            db.add(row)
+        else:
+            row.request_count = (row.request_count or 0) + 1
+            row.last_requested_at = datetime.utcnow()
+        db.commit()
+    except Exception as exc:                                      # noqa: BLE001
+        log.warning("showcase: enqueue_snapshot(%s) failed — %s", ticker, exc)
+        db.rollback()
+
+
+def drain_pending(db: Session, limit: int = 200) -> dict:
+    """Refresh every ticker in the pending queue, then remove successful
+    entries from the queue.  Failed entries stay queued so the next run
+    retries — but with each failure they fall down the priority list
+    naturally (we'd add per-row failure counters if this becomes flaky).
+
+    `limit` caps the per-run drain so a sudden flood of new searches
+    doesn't blow past the FMP free-tier quota in a single nightly run.
+    Default 200 = 1200 FMP calls at 6 per ticker — comfortably above the
+    250/day FMP cap, but the refresh job uses yfinance as the primary on
+    GitHub-Actions runners (which don't get throttled like Render does).
+    """
+    pending = (db.query(PendingSnapshot)
+                 .order_by(PendingSnapshot.request_count.desc(),
+                           PendingSnapshot.first_requested_at.asc())
+                 .limit(limit)
+                 .all())
+    summary = {"refreshed": [], "skipped": [], "failed": []}
+    for row in pending:
+        t = row.ticker
+        try:
+            ok = refresh_one(db, t)
+            if ok:
+                summary["refreshed"].append(t)
+                db.delete(row)
+                db.commit()
+            else:
+                summary["skipped"].append(t)
+        except Exception as exc:                                  # noqa: BLE001
+            log.exception("showcase: pending refresh error on %s", t)
             summary["failed"].append({"ticker": t, "error": str(exc)})
     return summary

@@ -187,11 +187,19 @@ async def analyze_company(request: Request, ticker: str, db: Session = Depends(g
         live_error = str(e)
         log.info("analyse(%s): live fetch failed — %s", t, live_error)
 
-    if (raw is None or showcase.is_sparse(raw)) and showcase.is_showcase_ticker(t):
+    sparse = raw is None or showcase.is_sparse(raw)
+    if sparse and showcase.is_showcase_ticker(t):
         snap = showcase.load_snapshot(db, t)
         if snap is not None:
             log.info("analyse(%s): serving showcase snapshot", t)
             raw, advanced, quality = snap
+            sparse = False
+    elif sparse:
+        # Non-showcase ticker that returned sparse / failed data — queue it
+        # for the nightly refresh so the next visitor sees full data.  This
+        # is fire-and-forget; the user's current response is unaffected.
+        showcase.enqueue_snapshot(db, t)
+        log.info("analyse(%s): queued for nightly snapshot refresh", t)
 
     if raw is None:
         # No live data AND no snapshot — return the underlying error if we
