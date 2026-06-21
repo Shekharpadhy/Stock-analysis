@@ -169,25 +169,37 @@ async def analyze_company(request: Request, ticker: str, db: Session = Depends(g
             )
         t = _validate_ticker(resolved)
 
+    # ── Live fetch + showcase fallback ───────────────────────────────────────
+    # Three outcomes drive the fallback decision:
+    #   1. Live fetch succeeds with full data → use it
+    #   2. Live fetch succeeds but is sparse (FMP /profile-only path) → snapshot
+    #   3. Live fetch raises (Yahoo rate-limit, network) → snapshot if available,
+    #      otherwise surface the live error
+    # The snapshot is populated by `python -m backend.cli.refresh_showcase` from
+    # a residential IP where yfinance works freely.
+    from backend.services import showcase
+
+    raw = advanced = quality = None
+    live_error: Optional[str] = None
     try:
-        # Combined fundamentals + advanced scores + quality, cached in Redis 15 min.
         raw, advanced, quality = await asyncio.to_thread(fetch_company_data, t)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        live_error = str(e)
+        log.info("analyse(%s): live fetch failed — %s", t, live_error)
 
-    # ── Showcase fallback ────────────────────────────────────────────────────
-    # When live fetch returns sparse data (FMP free tier only shipped /profile
-    # for an international listing, yfinance was blocked, etc.) AND the ticker
-    # is one of our curated demo tickers, serve the pre-computed snapshot so
-    # the dashboard never shows blank tiles for the tickers a reviewer is
-    # most likely to type.  Snapshots are refreshed nightly from a residential
-    # IP via `python -m backend.cli.refresh_showcase`.
-    from backend.services import showcase
-    if showcase.is_showcase_ticker(t) and showcase.is_sparse(raw):
+    if (raw is None or showcase.is_sparse(raw)) and showcase.is_showcase_ticker(t):
         snap = showcase.load_snapshot(db, t)
         if snap is not None:
-            log.info("analyse(%s): sparse live data — serving showcase snapshot", t)
+            log.info("analyse(%s): serving showcase snapshot", t)
             raw, advanced, quality = snap
+
+    if raw is None:
+        # No live data AND no snapshot — return the underlying error if we
+        # have one, otherwise a generic message.
+        raise HTTPException(
+            status_code=400,
+            detail=live_error or f"Could not fetch data for {t}.",
+        )
 
     # Sector classification
     sector, sub_sector = classify_sector(raw.get("sector", ""), raw.get("industry", ""))
