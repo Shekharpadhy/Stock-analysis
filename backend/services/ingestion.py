@@ -244,7 +244,7 @@ def fetch_company_data(ticker: str) -> tuple[dict, dict, dict]:
     # ── PRIMARY: Financial Modeling Prep ─────────────────────────────────────
     # Reliable, sane rate limits, covers US + NSE/BSE.  Only the analyst /
     # forward-PE fields are missing on the free tier — everything else lands.
-    from backend.services import fmp_adapter
+    from backend.services import fmp_adapter, nse_adapter
 
     raw: Optional[dict] = None
     ticker_obj          = None  # FMP doesn't give us a yfinance Ticker
@@ -255,7 +255,28 @@ def fetch_company_data(ticker: str) -> tuple[dict, dict, dict]:
             raw, _fmp_payloads = fmp_result
             log.info("ingestion(%s): primary fetch succeeded via FMP", ticker)
 
-    # ── FALLBACK: yfinance (only if FMP isn't configured or returned None) ──
+    # ── SECONDARY (Indian only): NSE direct endpoints ────────────────────────
+    # FMP's free tier returns only /profile (price, mcap, beta, 52wk) for
+    # .NS listings; the statement endpoints are paid.  NSE's public quote-equity
+    # endpoint covers the same /profile-shape fields with NSE-native data —
+    # used to backfill price/mcap when FMP fails or to fully populate those
+    # fields when FMP isn't configured at all.
+    if nse_adapter.is_indian_ticker(ticker):
+        nse_raw = nse_adapter.fetch_fundamentals(ticker)
+        if nse_raw is not None:
+            if raw is None:
+                raw = nse_raw
+                log.info("ingestion(%s): primary fetch via NSE (no FMP)", ticker)
+            else:
+                # Fill any None field in the FMP payload from NSE — NSE wins
+                # for the price fields on Indian listings because it's the
+                # exchange of record.
+                for k, v in nse_raw.items():
+                    if v is not None and raw.get(k) in (None, "", "Unknown"):
+                        raw[k] = v
+                log.info("ingestion(%s): backfilled FMP from NSE", ticker)
+
+    # ── FALLBACK: yfinance (only if neither source produced data) ───────────
     if raw is None:
         log.info("ingestion(%s): falling back to yfinance", ticker)
         raw, ticker_obj = fetch_yahoo_fundamentals_full(ticker)

@@ -397,6 +397,26 @@ class SchedulerLock(Base):
     expires_at  = Column(DateTime, nullable=False)
 
 
+class ShowcaseSnapshot(Base):
+    """Pre-computed full-fidelity analysis snapshot for a curated demo ticker.
+
+    On cloud-IP deployments yfinance is blocked and FMP's free tier ships only
+    /profile data for non-US listings, so live analyse of Indian tickers
+    produces sparse blanks.  A refresh job — run from a residential IP via
+    `python -m backend.cli.refresh_showcase` or a scheduled GitHub Action —
+    populates the full analysis here.  The analyze endpoint serves this
+    snapshot when live fetch returns sparse data, so the demo dashboard
+    never shows blanks for the curated ticker list.
+    """
+    __tablename__ = "showcase_snapshots"
+
+    ticker        = Column(String, primary_key=True)
+    raw_json      = Column(Text, nullable=False)
+    advanced_json = Column(Text, nullable=False)
+    quality_json  = Column(Text, nullable=False)
+    refreshed_at  = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
 class AuditLog(Base):
     """
     Append-only record of privileged actions.

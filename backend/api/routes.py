@@ -175,6 +175,20 @@ async def analyze_company(request: Request, ticker: str, db: Session = Depends(g
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+    # ── Showcase fallback ────────────────────────────────────────────────────
+    # When live fetch returns sparse data (FMP free tier only shipped /profile
+    # for an international listing, yfinance was blocked, etc.) AND the ticker
+    # is one of our curated demo tickers, serve the pre-computed snapshot so
+    # the dashboard never shows blank tiles for the tickers a reviewer is
+    # most likely to type.  Snapshots are refreshed nightly from a residential
+    # IP via `python -m backend.cli.refresh_showcase`.
+    from backend.services import showcase
+    if showcase.is_showcase_ticker(t) and showcase.is_sparse(raw):
+        snap = showcase.load_snapshot(db, t)
+        if snap is not None:
+            log.info("analyse(%s): sparse live data — serving showcase snapshot", t)
+            raw, advanced, quality = snap
+
     # Sector classification
     sector, sub_sector = classify_sector(raw.get("sector", ""), raw.get("industry", ""))
     raw["sector"]     = sector
